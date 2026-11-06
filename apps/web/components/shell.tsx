@@ -14,7 +14,7 @@ const NAV = [
   { href: '/sos', label: 'SOS alerts', icon: '⚠' },
 ];
 
-export function Shell({ name, children }: { name: string; children: ReactNode }) {
+export function Shell({ name, police, children }: { name: string; police?: boolean; children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { estates, current, setCurrent, appRole } = useEstate();
@@ -27,7 +27,14 @@ export function Shell({ name, children }: { name: string; children: ReactNode })
     if (o) setOpenAlerts(o.openSos);
   }, 10_000, [current?.estate.id]);
 
-  const nav = appRole === 'super_admin' ? [...NAV, { href: '/admin/police', label: 'Police stations', icon: '✚' }] : NAV;
+  const nav = [
+    ...NAV,
+    { href: '/community', label: 'Community alerts', icon: '◉' },
+    ...(appRole === 'super_admin'
+      ? [{ href: '/admin/police', label: 'Police units', icon: '✚' }, { href: '/admin/officers', label: 'Police officers', icon: '☆' }]
+      : []),
+    ...(police ? [{ href: '/police', label: 'Police portal', icon: '🚓' }] : []),
+  ];
 
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[260px_1fr]">

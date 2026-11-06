@@ -2,7 +2,8 @@ import * as Notifications from 'expo-notifications';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Linking, View } from 'react-native';
+import { WEB_URL } from '../src/lib/api';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '../src/lib/auth';
 import { registerForPush } from '../src/lib/push';
@@ -18,11 +19,13 @@ function Gate() {
   useEffect(() => {
     if (mode === 'loading') return;
     const group = segments[0];
-    const target =
-      mode === 'signed_out' ? '(auth)' : mode === 'unassigned' ? 'unassigned' : mode === 'resident' ? 'resident' : 'staff';
-    // Shared screens (SOS details, pass details) are fine for anyone signed in.
-    const shared = group === 'sos' || group === 'pass';
-    if (group !== target && !(shared && mode !== 'signed_out')) {
+    const target = mode === 'signed_out' ? '(auth)' : mode;
+    // Shared screens (SOS details, passes, community posts) are fine for anyone set up.
+    const shared =
+      ((group === 'pass' || group === 'community') && (mode === 'resident' || mode === 'staff')) ||
+      // SOS is never blocked — including for residents who haven't finished onboarding.
+      (group === 'sos' && (mode === 'resident' || mode === 'staff' || mode === 'onboarding'));
+    if (group !== target && !shared) {
       router.replace(target === '(auth)' ? '/login' : `/${target}`);
     }
   }, [mode, segments, router]);
@@ -36,6 +39,8 @@ function Gate() {
     const sub = Notifications.addNotificationResponseReceivedListener((r) => {
       const data = r.notification.request.content.data as { type?: string; alert_id?: string };
       if (data?.type === 'sos' && data.alert_id) router.push(`/sos/${data.alert_id}`);
+      if (data?.type === 'community') router.push('/resident/community');
+      if (data?.type === 'police_sos' && data.alert_id) Linking.openURL(`${WEB_URL}/police/alerts/${data.alert_id}`);
     });
     return () => sub.remove();
   }, [router]);
@@ -53,6 +58,7 @@ function Gate() {
       <StatusBar style={dark ? 'light' : 'dark'} />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: c.background } }}>
         <Stack.Screen name="pass/new" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="community/new" options={{ presentation: 'modal' }} />
         <Stack.Screen name="sos/[id]" options={{ gestureEnabled: false }} />
       </Stack>
     </>

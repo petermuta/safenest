@@ -8,6 +8,9 @@ const TOKEN_KEY = 'safenest.session';
 let token: string | null = null;
 let onSignedOut: (() => void) | null = null;
 
+/** Current session token, for authenticated image requests. */
+export const authHeaders = (): Record<string, string> => (token ? { Authorization: `Bearer ${token}` } : {});
+
 export async function loadToken() {
   token = await SecureStore.getItemAsync(TOKEN_KEY);
   return token;

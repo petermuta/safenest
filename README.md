@@ -105,6 +105,38 @@ Tests: `npm run test:db` needs nothing else. `npm run test:e2e -- http://localho
 - **Privacy law.** Uganda's Data Protection and Privacy Act, 2019 applies, since you're storing locations, photos and audio. Register with the Personal Data Protection Office and add a privacy notice before launch.
 - **Costs.** Netlify Database and Functions use plan credits. Africa's Talking charges per SMS: each SOS sends one SMS per staff member without push, plus one to the police.
 
+---
+
+## Phase 1b — police portal, resident identity, community alerts
+
+**Police portal** (`/police` on the website, works on phones)
+- Police units form a chain: **post → regional HQ → headquarters** (super admin: *Police units*).
+- Each officer is registered by phone number (*Police officers*) and signs in with their own SMS code. Roles:
+  - **Dispatcher**, at a post: sees every SOS routed to the post, dispatches on-duty officers, escalates to regional.
+  - **Officer**, at a post: signs on/off duty; sees only cases assigned to them, with a map, distance, an estimated travel time and a **Get directions** button; reports *en route → on scene → closed*.
+  - **Commander**, at a regional HQ or headquarters: sees cases escalated to them; regional commanders escalate to headquarters.
+- SOS alerts route to the nearest active **post** only.
+- **Audit log:** every case opened, dispatch, escalation, status change, NIN reveal, NIN search (with its stated reason) and photo view is recorded with the officer's name.
+
+**Resident identity** (mobile onboarding)
+- Residents must add their **NIN** (with explicit consent) and a **live selfie** taken with the front camera before using the app. The SOS button is available throughout onboarding.
+- The NIN is encrypted (AES-256-GCM) with `NIN_ENCRYPTION_KEY`. Estate managers see only `••••••••••ABCD`. Police can reveal it on a case, or search by exact NIN with a reason; both are logged.
+- The selfie is private: the resident, police on that resident's case, or police who searched them in the last hour (logged).
+
+**Community alerts** (mobile *Neighbours* tab; managers moderate on the website)
+- Residents post suspicious activity with a category, description, optional photo and location. Neighbours whose estate is within **1 km** get a push notification.
+- Neighbours can react with *I see it too* or *All clear*, or report a post. 3 reports hide it until a manager reviews; managers of nearby estates can remove or restore posts.
+- **Police never see the feed.** *Send to police* turns a post into an SOS from the person who tapped it, with the description and photo attached as evidence. It only ever creates one SOS per post.
+
+**Extra environment variable:** `NIN_ENCRYPTION_KEY`, 32+ random characters, stored as a secret. **Never change it** after residents register, and keep a backup somewhere safe.
+
+**Setting it up:** in the dashboard, go to *Police units* and add headquarters, then regional HQs, then posts, each pointing to the one above. Then go to *Police officers* and add dispatchers and officers at posts and commanders at HQs. Officers sign in at the same website and land in the police portal.
+
+**Before real use:**
+- Get written agreement from Uganda Police on which units and officers use the portal.
+- Register SafeNest with the Personal Data Protection Office, since you now hold NINs and photos.
+- Keep `NIN_ENCRYPTION_KEY` backed up offline.
+
 ## Project map
 ```
 apps/web/netlify/database/migrations/   the whole schema, rules and functions (applied on deploy)

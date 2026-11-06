@@ -12,6 +12,8 @@ interface MemberRow {
   role: MemberRole;
   unit_id: string | null;
   profile: { full_name: string | null; phone: string } | null;
+  nin_masked?: string | null;
+  has_selfie?: boolean;
 }
 
 /** "A1-A12, B1, B2" -> ["A1".."A12","B1","B2"] */
@@ -131,8 +133,8 @@ export default function EstateDetail() {
 
   const q = filter.toLowerCase();
   const people = [
-    ...members.map((m) => ({ kind: 'member' as const, key: m.id, name: m.profile?.full_name ?? '—', phone: m.profile?.phone ?? '', role: m.role, unit: m.unit_id, row: m })),
-    ...invites.map((i) => ({ kind: 'invite' as const, key: i.id, name: i.full_name ?? '—', phone: i.phone, role: i.role, unit: i.unit_id, row: i })),
+    ...members.map((m) => ({ kind: 'member' as const, key: m.id, name: m.profile?.full_name ?? '—', phone: m.profile?.phone ?? '', role: m.role, unit: m.unit_id, row: m, nin: m.nin_masked ?? null, selfie: !!m.has_selfie })),
+    ...invites.map((i) => ({ kind: 'invite' as const, key: i.id, name: i.full_name ?? '—', phone: i.phone, role: i.role, unit: i.unit_id, row: i, nin: null, selfie: false })),
   ].filter((p) => !q || p.name.toLowerCase().includes(q) || p.phone.includes(q) || (p.unit && unitLabel[p.unit]?.toLowerCase().includes(q)));
 
   return (
@@ -221,6 +223,12 @@ export default function EstateDetail() {
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-semibold">{p.name}</div>
                     <div className="text-sm text-muted">{formatUgPhone(p.phone)}{p.unit ? ` · Unit ${unitLabel[p.unit] ?? '?'}` : ''}</div>
+                    {p.kind === 'member' && p.role === 'resident' && (
+                      <div className="text-xs text-muted">
+                        {p.nin ? <>NIN <span className="font-mono">{p.nin}</span></> : <span className="text-amber-700 dark:text-amber-400">NIN not added</span>}
+                        {' · '}{p.selfie ? 'Photo ✓' : <span className="text-amber-700 dark:text-amber-400">no photo</span>}
+                      </div>
+                    )}
                   </div>
                   <Badge tone={p.role === 'manager' ? 'green' : p.role === 'guard' ? 'amber' : 'grey'}>{p.role}</Badge>
                   {p.kind === 'invite' && <Badge tone="grey">not signed in</Badge>}

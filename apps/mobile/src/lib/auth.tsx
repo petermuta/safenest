@@ -9,14 +9,29 @@ export interface MembershipWithEstate {
   unit: Pick<Unit, 'id' | 'label' | 'block'> | null;
 }
 
+export interface IdentityStatus {
+  has_nin: boolean;
+  nin_masked: string | null;
+  has_selfie: boolean;
+  consented: boolean;
+}
+
+export interface PoliceInfo {
+  id: string;
+  role: string;
+  station_name: string;
+}
+
 /** Which app experience someone gets, decided by their estate membership. */
-export type Mode = 'loading' | 'signed_out' | 'unassigned' | 'resident' | 'staff';
+export type Mode = 'loading' | 'signed_out' | 'unassigned' | 'onboarding' | 'resident' | 'staff' | 'police';
 
 interface AuthState {
   userId: string | null;
   profile: Profile | null;
   memberships: MembershipWithEstate[];
   active: MembershipWithEstate | null;
+  identity: IdentityStatus | null;
+  police: PoliceInfo | null;
   mode: Mode;
   signIn: (phone: string, code: string) => Promise<void>;
   refresh: () => Promise<void>;
@@ -29,6 +44,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [memberships, setMemberships] = useState<MembershipWithEstate[]>([]);
+  const [identity, setIdentity] = useState<IdentityStatus | null>(null);
+  const [police, setPolice] = useState<PoliceInfo | null>(null);
 
   const reset = useCallback(() => {
     setProfile(null);
@@ -37,9 +54,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     try {
-      const me = await api<{ profile: Profile; memberships: MembershipWithEstate[] }>('/api/me');
+      const me = await api<{ profile: Profile; memberships: MembershipWithEstate[]; identity: IdentityStatus; police: PoliceInfo | null }>('/api/me');
       setProfile(me.profile);
       setMemberships(me.memberships);
+      setIdentity(me.identity);
+      setPolice(me.police);
     } catch (e: any) {
       if (e?.status === 401) reset();
       // Offline: keep whatever we had so the SOS button still shows.
@@ -63,8 +82,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   let mode: Mode = 'loading';
   if (ready) {
     if (!profile) mode = 'signed_out';
-    else if (!active) mode = 'unassigned';
-    else mode = active.role === 'resident' ? 'resident' : 'staff';
+    else if (!active) mode = police ? 'police' : 'unassigned';
+    else if (active.role !== 'resident') mode = 'staff';
+    // Residents must add their NIN and a live selfie before using SafeNest.
+    else mode = identity?.has_nin && identity?.has_selfie ? 'resident' : 'onboarding';
   }
 
   const value: AuthState = {
@@ -72,6 +93,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     profile,
     memberships,
     active,
+    identity,
+    police,
     mode,
     signIn: async (phone, code) => {
       const { token } = await api<{ token: string }>('/api/auth/verify', { body: { phone, code } });

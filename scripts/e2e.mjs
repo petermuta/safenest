@@ -2,8 +2,9 @@
 //
 //   node scripts/e2e.mjs http://localhost:3000
 //
-// Needs a running app with ALLOW_TEST_OTP=true, TEST_OTP_NUMBERS containing the five
-// numbers below, SUPER_ADMIN_PHONES=+256700000100, and a fresh database.
+// Needs a running app with ALLOW_TEST_OTP=true, TEST_OTP_NUMBERS containing every test
+// number below (+2567000001/2/3/4/5/6/7/800 and 999 series), SUPER_ADMIN_PHONES=+256700000100,
+// NIN_ENCRYPTION_KEY set, and a fresh database with the test police stations seeded.
 // Never point this at the live site.
 
 const BASE = (process.argv[2] ?? 'http://localhost:3000').replace(/\/$/, '');
@@ -173,6 +174,155 @@ r = await call('/', { cookie: mgr.cookie });
 ok(r.status === 200 && String(r.data).includes('SafeNest'), 'dashboard loads with the session cookie');
 r = await call('/');
 ok(r.status === 307 && r.res.headers.get('location')?.endsWith('/login'), 'signed-out visitor is sent to /login');
+
+console.log('\nResident identity (NIN + selfie)');
+r = await call('/api/me/identity', { token: res.token, body: { full_name: 'Grace Achieng', nin: 'CM12345678ABCD' } });
+ok(r.status === 400, 'NIN refused without consent');
+r = await call('/api/me/identity', { token: res.token, body: { full_name: 'Grace Achieng', nin: '12345', consent: true } });
+ok(r.status === 400, 'malformed NIN refused');
+r = await call('/api/me/identity', { token: res.token, body: { full_name: 'Grace Achieng', nin: 'cm 1234 5678 abcd', consent: true } });
+ok(r.status === 200 && r.data.nin_masked === '••••••••••ABCD', `NIN saved and masked (${r.data.nin_masked})`);
+r = await call('/api/me/identity', { token: res2.token, body: { full_name: 'Copy Cat', nin: 'CM12345678ABCD', consent: true } });
+ok(r.status === 409, 'same NIN cannot be registered to a second account');
+const selfie = () => { const f = new FormData(); f.append('photo', new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 9, 9, 9, 0xff, 0xd9])], { type: 'image/jpeg' }), 's.jpg'); return f; };
+r = await call('/api/me/selfie', { token: res.token, form: selfie() });
+ok(r.status === 201, 'live selfie uploaded');
+r = await call('/api/me', { token: res.token });
+ok(r.data.identity.has_nin && r.data.identity.has_selfie, 'onboarding complete for the resident');
+r = await call(`/api/estates/${estate}`, { token: mgr.token });
+const grace = r.data.members.find((m) => m.profile.phone === '+256700000200');
+ok(grace?.nin_masked === '••••••••••ABCD' && grace.has_selfie && !JSON.stringify(r.data).includes('CM12345678'), 'manager sees only the masked NIN');
+const meRes = (await call('/api/me', { token: res.token })).data.profile.id;
+r = await call(`/api/identity/${meRes}/selfie`, { token: res2.token });
+ok(r.status === 403, "other residents can't see someone's photo");
+
+console.log('\nPolice chain of command');
+const unit = async (body) => (await call('/api/admin/police', { token: mgr.token, body })).data;
+const hqU = await unit({ name: 'TEST National HQ', level: 'headquarters', phone: '+256700000020', lat: 0.31, lng: 32.58 });
+const regU = await unit({ name: 'TEST Kampala North Region', level: 'regional', parent_id: hqU.id, phone: '+256700000021', lat: 0.35, lng: 32.6 });
+r = await call('/api/admin/police', { token: mgr.token, body: { name: 'Bad post', level: 'post', parent_id: hqU.id, phone: '+256700000022', lat: 0.4, lng: 32.6 } });
+ok(r.status === 400, 'a post cannot report straight to headquarters');
+const postU = await unit({ name: 'TEST Kira Gardens Post', level: 'post', parent_id: regU.id, phone: '+256700000023', lat: 0.4005, lng: 32.6402 });
+ok(!!postU.id, 'headquarters → regional → post created');
+r = await call('/api/admin/police', { token: grd.token });
+ok(r.status === 403, 'only the super admin manages police units');
+
+const addOfficer = (station_id, phone, full_name, role) => call('/api/admin/officers', { token: mgr.token, body: { station_id, phone, full_name, role, badge_no: `UPF-${phone.slice(-3)}` } });
+r = await addOfficer(postU.id, '0700000500', 'Sgt. Okello', 'commander');
+ok(r.status === 400, 'posts take officers and dispatchers, not commanders');
+await addOfficer(postU.id, '0700000500', 'Sgt. Okello Dispatch', 'dispatcher');
+await addOfficer(postU.id, '0700000600', 'PC Nansubuga', 'officer');
+await addOfficer(regU.id, '0700000700', 'ASP Mugisha', 'commander');
+await addOfficer(hqU.id, '0700000800', 'SP Atim', 'commander');
+const disp = await signIn('+256700000500');
+const offc = await signIn('+256700000600');
+const regc = await signIn('+256700000700');
+const hqc = await signIn('+256700000800');
+r = await call('/api/police/me', { token: disp.token });
+ok(r.data.role === 'dispatcher' && r.data.station.name === 'TEST Kira Gardens Post', 'officers are linked to their own login on first sign-in');
+r = await call('/api/police/alerts', { token: res.token });
+ok(r.status === 403, 'residents cannot open the police portal');
+
+r = await call('/api/sos', { token: res.token, body: { lat: 0.4001, lng: 32.6401, accuracy: 9, estate_id: estate } });
+const sos2 = r.data.alert_id;
+ok(r.data.dispatch?.police?.name === 'TEST Kira Gardens Post', `new SOS routed to the nearest post (${r.data.dispatch?.police?.name})`);
+const listed = async (who) => (await call('/api/police/alerts', { token: who.token })).data.some?.((a) => a.id === sos2) ?? false;
+ok(await listed(disp), 'dispatcher sees the new case');
+ok(!(await listed(offc)) && !(await listed(regc)) && !(await listed(hqc)), 'officer, regional and HQ do not see it yet');
+
+r = await call(`/api/police/alerts/${sos2}`, { token: disp.token });
+ok(r.data.alert.resident.nin_masked === '••••••••••ABCD' && r.data.alert.resident.has_selfie && !JSON.stringify(r.data).includes('CM12345678'),
+  'case shows the resident, photo flag and masked NIN only');
+ok(r.data.can.assign && r.data.can.escalate, 'dispatcher can assign and escalate');
+r = await call(`/api/identity/${meRes}/selfie?alert=${sos2}`, { token: disp.token });
+ok(r.status === 200, "dispatcher can see the resident's photo on the case");
+r = await call(`/api/police/alerts/${sos2}/nin`, { token: disp.token, method: 'POST' });
+ok(r.data.nin === 'CM12345678ABCD', 'full NIN revealed to police on request (logged)');
+
+const officers = (await call('/api/police/officers', { token: disp.token })).data;
+const pc = officers.find((o) => o.full_name === 'PC Nansubuga');
+r = await call(`/api/police/alerts/${sos2}/assign`, { token: disp.token, body: { officer_id: pc.id } });
+ok(r.status === 400, 'cannot dispatch an officer who is off duty');
+await call('/api/police/duty', { token: offc.token, body: { on_duty: true } });
+r = await call(`/api/police/alerts/${sos2}/assign`, { token: disp.token, body: { officer_id: pc.id } });
+ok(r.status === 200, 'dispatcher assigns the on-duty officer');
+ok(await listed(offc), 'assigned officer now sees the case');
+r = await call(`/api/police/alerts/${sos2}`, { token: offc.token });
+ok(r.data.can.status && !r.data.can.assign && !r.data.can.escalate && typeof r.data.alert.lat === 'number', 'officer gets the GPS pin and can update progress only');
+r = await call(`/api/police/alerts/${sos2}/status`, { token: offc.token, body: { status: 'en_route' } });
+ok(r.status === 200, 'officer marks en route');
+r = await call(`/api/sos/${sos2}`, { token: res.token });
+ok(r.data.status === 'acknowledged', 'resident sees help is responding');
+
+r = await call(`/api/police/alerts/${sos2}/escalate`, { token: offc.token, method: 'POST' });
+ok(r.status === 400, 'officer cannot escalate');
+r = await call(`/api/police/alerts/${sos2}/escalate`, { token: disp.token, method: 'POST' });
+ok(r.data.level === 'regional' && (await listed(regc)) && !(await listed(hqc)), 'post escalates to regional HQ (HQ still cannot see it)');
+r = await call(`/api/police/alerts/${sos2}/escalate`, { token: regc.token, method: 'POST' });
+ok(r.data.level === 'headquarters' && (await listed(hqc)), 'regional escalates to headquarters');
+
+r = await call('/api/police/search', { token: hqc.token, body: { nin: 'CM12345678ABCD' } });
+ok(r.status === 400, 'NIN search needs a reason');
+r = await call('/api/police/search', { token: hqc.token, body: { nin: 'CM12345678ABCD', reason: 'Identity check on escalated case' } });
+ok(r.data.found && r.data.person.full_name === 'Grace Achieng' && r.data.homes[0]?.unit === 'A1', 'HQ finds the resident by exact NIN');
+r = await call(`/api/identity/${meRes}/selfie`, { token: hqc.token });
+ok(r.status === 200, 'photo viewable after a logged search');
+r = await call('/api/police/search', { token: res.token, body: { nin: 'CM12345678ABCD', reason: 'curious neighbour' } });
+ok(r.status === 403, 'residents cannot search by NIN');
+
+r = await call(`/api/police/alerts/${sos2}/status`, { token: offc.token, body: { status: 'closed' } });
+ok(r.status === 200, 'officer closes the case');
+r = await call('/api/police/audit', { token: hqc.token });
+const actions = new Set(r.data.map((x) => x.action));
+ok(['escalate', 'nin_search', 'view_selfie'].every((a) => actions.has(a)), `HQ audit log shows actions in its chain (${[...actions].join(', ')})`);
+r = await call('/api/police/audit', { token: disp.token });
+ok(['view_alert', 'reveal_nin', 'assign', 'escalate'].every((a) => r.data.some((x) => x.action === a)), 'post audit log records opens, NIN reveals, dispatch and escalation');
+
+console.log('\nCommunity alerts');
+const cform = (lat, lng, withPhoto) => {
+  const f = new FormData();
+  f.append('category', 'suspicious_person'); f.append('message', 'Two men checking car doors near the gate');
+  f.append('lat', String(lat)); f.append('lng', String(lng));
+  if (withPhoto) f.append('photo', new Blob([new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 0xff, 0xd9])], { type: 'image/jpeg' }), 'p.jpg');
+  return f;
+};
+r = await call('/api/community', { token: res.token, form: cform(0.4003, 32.6403, true) });
+ok(r.status === 201, 'resident posts a community alert with a photo');
+const ca = r.data.id;
+r = await call('/api/community?lat=0.4&lng=32.64', { token: res2.token });
+const seen = r.data.alerts?.find((a) => a.id === ca);
+ok(!!seen && seen.distance_km < 1 && seen.has_photo, `neighbour within 1 km sees it (${seen?.distance_km} km)`);
+r = await call('/api/community?lat=0.42&lng=32.64', { token: res2.token });
+ok(!r.data.alerts.some((a) => a.id === ca), 'someone ~2 km away does not');
+r = await call('/api/community', { token: stranger.token });
+ok(r.status === 403, 'people without an estate cannot see the feed');
+r = await call('/api/community', { token: disp.token });
+ok(r.status === 403, 'police cannot see community alerts');
+r = await call(`/api/community/${ca}/photo`, { token: res2.token });
+ok(r.status === 200, 'neighbour can view the photo');
+r = await call(`/api/community/${ca}/react`, { token: res2.token, body: { kind: 'see_it_too' } });
+r = await call('/api/community?lat=0.4&lng=32.64', { token: grd.token });
+ok(r.data.alerts.find((a) => a.id === ca)?.see_it_too === 1, '"I see it too" counted');
+r = await call(`/api/community/${ca}/report`, { token: res.token, body: {} });
+ok(r.status === 400, "you can't report your own post");
+r = await call(`/api/community/${ca}/remove`, { token: res2.token, body: { status: 'removed' } });
+ok(r.status === 403, 'residents cannot remove posts');
+
+r = await call(`/api/community/${ca}/send-to-police`, { token: res2.token, method: 'POST' });
+const fromCommunity = r.data.alert_id;
+ok(r.status === 201 && !!fromCommunity, 'neighbour taps "Send to police" → SOS created');
+r = await call(`/api/police/alerts/${fromCommunity}`, { token: disp.token });
+ok(r.data.alert?.source === 'community' && r.data.alert.note?.includes('checking car doors') && r.data.alert.evidence.length === 1,
+  'police get the description and the photo as evidence');
+r = await call(`/api/community/${ca}/send-to-police`, { token: grd.token, method: 'POST' });
+ok(r.data.already_sent && r.data.alert_id === fromCommunity, 'sending twice does not create a second SOS');
+
+r = await call(`/api/community/${ca}/remove`, { token: mgr.token, body: { status: 'removed' } });
+ok(r.status === 200, 'estate manager removes the post');
+r = await call('/api/community?lat=0.4&lng=32.64', { token: res2.token });
+ok(!r.data.alerts.some((a) => a.id === ca), 'removed post disappears for residents');
+r = await call('/api/community?lat=0.4&lng=32.64', { token: mgr.token });
+ok(r.data.alerts.find((a) => a.id === ca)?.status === 'removed', 'manager still sees it (marked removed)');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

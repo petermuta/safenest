@@ -1,4 +1,5 @@
 import { asUser } from '@/lib/server/db';
+import { maskNin } from '@/lib/server/identity';
 import { ApiError, body, handle, ok } from '@/lib/server/http';
 import { requireUser } from '@/lib/server/session';
 
@@ -20,7 +21,25 @@ export const GET = handle(async (req: Request) => {
         where m.user_id = auth.uid() and m.active
         order by m.created_at`,
     );
-    return { profile, memberships };
+    const identity = await tx.one(
+      `select nin_last4, consent_at, selfie_path is not null as has_selfie from resident_identity where user_id = auth.uid()`,
+    );
+    const police = await tx.one(
+      `select o.id, o.role, o.on_duty, s.name as station_name, s.level as station_level
+         from police_officers o join police_stations s on s.id = o.station_id
+        where o.user_id = auth.uid() and o.active`,
+    );
+    return {
+      profile,
+      memberships,
+      identity: {
+        has_nin: !!identity?.nin_last4,
+        nin_masked: maskNin(identity?.nin_last4),
+        has_selfie: !!identity?.has_selfie,
+        consented: !!identity?.consent_at,
+      },
+      police,
+    };
   }));
 });
 

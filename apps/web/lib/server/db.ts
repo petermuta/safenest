@@ -22,24 +22,35 @@ function getPool(): Pool {
 let schemaReady: Promise<void> | null = null;
 
 /**
- * Makes sure the tables exist. Normally Netlify applies netlify/database/migrations on
- * deploy; if it hasn't, the server applies the same (idempotent) SQL once, under an
- * advisory lock so concurrent instances don't race. Cheap check after the first time.
+ * Makes sure every migration in netlify/database/migrations has been applied.
+ * Netlify normally applies them on deploy; on this project it doesn't, so the server
+ * applies any missing ones itself — once, under an advisory lock so concurrent
+ * instances don't race. Migrations are idempotent, so a later re-run is harmless.
  */
 function ensureSchema(): Promise<void> {
   if (!schemaReady) {
     schemaReady = (async () => {
+      const { MIGRATIONS } = await import('./schema.generated');
       const client = await getPool().connect();
+      const applied = async () => {
+        const has = (await client.query(`select to_regclass('public.safenest_migrations') is not null as ok`)).rows[0]?.ok;
+        if (!has) return new Set<string>();
+        return new Set((await client.query(`select name from public.safenest_migrations`)).rows.map((r) => r.name as string));
+      };
       try {
-        const ready = (await client.query(`select to_regclass('public.sos_evidence') is not null as ok`)).rows[0]?.ok;
-        if (ready) return;
-        const { MIGRATIONS } = await import('./schema.generated');
+        let done = await applied();
+        if (MIGRATIONS.every((m) => done.has(m.name))) return;
+
         await client.query('begin');
         await client.query('select pg_advisory_xact_lock(724501)');
-        const again = (await client.query(`select to_regclass('public.sos_evidence') is not null as ok`)).rows[0]?.ok;
-        if (!again) {
-          for (const m of MIGRATIONS) await client.query(m.sql);
-          console.log(`SafeNest: created database tables (${MIGRATIONS.map((m) => m.name).join(', ')})`);
+        await client.query(`create table if not exists public.safenest_migrations (
+          name text primary key, applied_at timestamptz not null default now())`);
+        done = await applied();
+        for (const m of MIGRATIONS) {
+          if (done.has(m.name)) continue;
+          await client.query(m.sql);
+          await client.query(`insert into public.safenest_migrations (name) values ($1) on conflict do nothing`, [m.name]);
+          console.log(`SafeNest: applied migration ${m.name}`);
         }
         await client.query('commit');
       } catch (e) {

@@ -69,6 +69,8 @@ export async function verifyCode(phone: string, code: string): Promise<string> {
        returning id`,
       [phone],
     );
+    // Police officers registered by the admin are linked to their account on first sign-in.
+    await tx.all(`update police_officers set user_id = $1 where phone = $2 and user_id is null`, [user!.id, phone]);
     // Super admins come from configuration, so nobody needs database access to set one.
     const admins = (process.env.SUPER_ADMIN_PHONES ?? '').split(',').map((s) => s.trim()).filter(Boolean);
     if (admins.includes(phone)) await tx.all(`update profiles set role = 'super_admin' where id = $1`, [user!.id]);

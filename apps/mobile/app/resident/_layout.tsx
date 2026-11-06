@@ -6,6 +6,7 @@ export default function ResidentLayout() {
       tabs={[
         { name: 'index', title: 'Home', icon: 'shield-checkmark' },
         { name: 'passes', title: 'Guests', icon: 'ticket' },
+        { name: 'community', title: 'Neighbours', icon: 'people' },
         { name: 'profile', title: 'Profile', icon: 'person-circle' },
       ]}
     />

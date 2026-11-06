@@ -145,5 +145,77 @@ await expectErr(res, `select * from create_guest_pass($1, 'x', now() + interval 
 r = await as(res, `select trigger_sos(0.2, 32.5, 10) id`);
 ok(!!r.rows[0].id, 'suspended estate: SOS still works');
 
+console.log('\nPolice chain of command');
+const hq = (await db.query(`insert into police_stations (name, phone, lat, lng, level) values ('TEST HQ', '+256700000010', 0.31, 32.58, 'headquarters') returning id`)).rows[0].id;
+const regional = (await db.query(`insert into police_stations (name, phone, lat, lng, level, parent_id) values ('TEST Kampala North Region', '+256700000011', 0.35, 32.6, 'regional', $1) returning id`, [hq])).rows[0].id;
+const kiraPost = (await db.query(`select police_station_id id from sos_alerts where id = $1`, [alert])).rows[0].id;
+await db.query(`update police_stations set parent_id = $1 where id = $2`, [regional, kiraPost]);
+const otherPost = (await db.query(`select id from police_stations where level = 'post' and id <> $1 limit 1`, [kiraPost])).rows[0].id;
+r = await db.query(`select count(*)::int n from nearest_police_station(0.35, 32.6) n join police_stations s on s.id = n.id where s.level = 'post'`);
+ok(r.rows[0].n === 1, 'SOS routing only ever picks a post, never a regional HQ or headquarters');
+
+const mkOfficer = async (phone, station, role) => {
+  const uid = await signUp(phone.slice(1));
+  const id = (await db.query(`insert into police_officers (station_id, user_id, phone, full_name, role) values ($1, $2, $3, $4, $5) returning id`,
+    [station, uid, phone, `Officer ${phone.slice(-3)}`, role])).rows[0].id;
+  return { uid, id };
+};
+const dispatcher = await mkOfficer('+256700000500', kiraPost, 'dispatcher');
+const officer = await mkOfficer('+256700000600', kiraPost, 'officer');
+const regCmd = await mkOfficer('+256700000700', regional, 'commander');
+const hqCmd = await mkOfficer('+256700000800', hq, 'commander');
+const otherDisp = await mkOfficer('+256700000900', otherPost, 'dispatcher');
+const sees = async (o) => (await as(o.uid, `select can_police_view_alert($1) v`, [alert])).rows[0].v;
+
+ok(await sees(dispatcher), "post dispatcher sees the SOS routed to the post");
+ok(!(await sees(officer)), 'unassigned officer cannot see it');
+ok(!(await sees(regCmd)) && !(await sees(hqCmd)), 'regional and HQ cannot see it before escalation');
+ok(!(await sees(otherDisp)), "another post's dispatcher cannot see it");
+r = await as(res2, `select can_police_view_alert($1) v, is_police() p`, [alert]);
+ok(!r.rows[0].v && !r.rows[0].p, 'residents are not police');
+
+await expectErr(officer.uid, `select police_assign($1, $2)`, [alert, officer.id], 'an officer cannot assign themselves');
+await expectErr(dispatcher.uid, `select police_assign($1, $2)`, [alert, officer.id], 'cannot assign an officer who is off duty');
+await db.query(`update police_officers set on_duty = true where id = $1`, [officer.id]);
+await expectErr(otherDisp.uid, `select police_assign($1, $2)`, [alert, officer.id], "another post's dispatcher cannot assign");
+await as(dispatcher.uid, `select police_assign($1, $2)`, [alert, officer.id]);
+ok(await sees(officer), 'assigned officer now sees the SOS');
+r = await db.query(`select police_status, assigned_officer_id from sos_alerts where id = $1`, [alert]);
+ok(r.rows[0].police_status === 'assigned' && r.rows[0].assigned_officer_id === officer.id, 'alert marked assigned');
+
+await as(officer.uid, `select police_set_status($1, 'en_route')`, [alert]);
+ok((await db.query(`select police_status from sos_alerts where id = $1`, [alert])).rows[0].police_status === 'en_route', 'officer marks en route');
+await expectErr(regCmd.uid, `select police_set_status($1, 'closed')`, [alert], 'regional cannot change a post’s case status');
+
+await expectErr(officer.uid, `select police_escalate($1)`, [alert], 'an officer cannot escalate');
+r = await as(dispatcher.uid, `select police_escalate($1) l`, [alert]);
+ok(r.rows[0].l === 'regional' && (await sees(regCmd)), 'post escalates to regional; regional now sees it');
+ok(!(await sees(hqCmd)), 'HQ still cannot see it');
+await expectErr(dispatcher.uid, `select police_escalate($1)`, [alert], 'post cannot jump straight to HQ');
+r = await as(regCmd.uid, `select police_escalate($1) l`, [alert]);
+ok(r.rows[0].l === 'headquarters' && (await sees(hqCmd)), 'regional escalates to headquarters; HQ now sees it');
+
+r = await as(dispatcher.uid, `select can_view_evidence($1) v`, [`${alert}/audio-1.m4a`]);
+ok(r.rows[0].v, 'police who can see the alert can open its evidence');
+r = await as(otherDisp.uid, `select can_view_evidence($1) v`, [`${alert}/audio-1.m4a`]);
+ok(!r.rows[0].v, "other posts can't open its evidence");
+
+await as(officer.uid, `select police_set_status($1, 'closed')`, [alert]);
+r = await db.query(`select status, police_status from sos_alerts where id = $1`, [alert]);
+ok(r.rows[0].police_status === 'closed' && r.rows[0].status === 'resolved', 'closing the case resolves the SOS');
+r = await db.query(`select action, count(*)::int n from police_audit_log where alert_id = $1 group by action order by action`, [alert]);
+ok(r.rows.map((x) => `${x.action}:${x.n}`).join(',') === 'assign:1,escalate:2,status:2', `audit log records every action (${r.rows.map((x) => `${x.action}:${x.n}`).join(', ')})`);
+
+console.log('\nCommunity alerts');
+r = await db.query(`select round(distance_km(0.3476, 32.5825, 0.3476, 32.5915)::numeric, 2) d`);
+ok(Number(r.rows[0].d) > 0.95 && Number(r.rows[0].d) < 1.05, `distance helper (~1 km: ${r.rows[0].d})`);
+const ca = (await db.query(`insert into community_alerts (user_id, estate_id, category, message, lat, lng) values ($1, $2, 'suspicious_person', 'Man checking car doors', 0.4005, 32.6402) returning id`, [res, estate])).rows[0].id;
+r = await as(mgr, `select can_moderate_community($1) m`, [ca]);
+ok(r.rows[0].m, 'estate manager can moderate a nearby post');
+r = await as(res2, `select can_moderate_community($1) m, has_any_membership() h`, [ca]);
+ok(!r.rows[0].m && r.rows[0].h, 'residents can read the feed but not moderate');
+r = await as(stranger, `select has_any_membership() h`);
+ok(!r.rows[0].h, 'people with no estate are not in the community feed');
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

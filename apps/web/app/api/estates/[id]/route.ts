@@ -16,8 +16,12 @@ export const GET = handle(async (req: Request, { params }: Ctx) => {
     const manager = (await tx.one(`select public.is_estate_manager($1) as m`, [id]))?.m;
     if (!manager) return { estate, units };
     const members = await tx.all(
-      `select m.id, m.role, m.unit_id, jsonb_build_object('full_name', p.full_name, 'phone', p.phone) as profile
+      `select m.id, m.role, m.unit_id,
+              jsonb_build_object('full_name', p.full_name, 'phone', p.phone) as profile,
+              case when ri.nin_last4 is null then null else '••••••••••' || ri.nin_last4 end as nin_masked,
+              coalesce(ri.selfie_path is not null, false) as has_selfie
          from memberships m join profiles p on p.id = m.user_id
+         left join resident_identity ri on ri.user_id = m.user_id
         where m.estate_id = $1 and m.active order by m.created_at`,
       [id],
     );
