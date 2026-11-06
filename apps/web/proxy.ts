@@ -1,32 +1,26 @@
-import { createServerClient } from '@supabase/ssr';
+import { jwtVerify } from 'jose';
 import { NextResponse, type NextRequest } from 'next/server';
 
-// Refreshes the Supabase session cookie on each request and keeps signed-out
-// visitors on the login page. Public guest-pass pages (/p/...) stay open.
+// Keeps signed-out visitors on the login page. Public guest-pass pages (/p/...)
+// and the API (which checks sessions itself) stay open.
 export async function proxy(request: NextRequest) {
-  let response = NextResponse.next({ request });
-
-  const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
-    cookies: {
-      getAll: () => request.cookies.getAll(),
-      setAll: (list) => {
-        list.forEach(({ name, value }) => request.cookies.set(name, value));
-        response = NextResponse.next({ request });
-        list.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
-      },
-    },
-  });
-
-  const { data: { user } } = await supabase.auth.getUser();
   const path = request.nextUrl.pathname;
-  const isPublic = path.startsWith('/login') || path.startsWith('/p/');
+  if (path.startsWith('/login') || path.startsWith('/p/') || path.startsWith('/api/')) return NextResponse.next();
 
-  if (!user && !isPublic) {
+  const token = request.cookies.get('sn_session')?.value;
+  let signedIn = false;
+  if (token && process.env.SESSION_SECRET) {
+    try {
+      await jwtVerify(token, new TextEncoder().encode(process.env.SESSION_SECRET), { audience: 'session' });
+      signedIn = true;
+    } catch {}
+  }
+  if (!signedIn) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     return NextResponse.redirect(url);
   }
-  return response;
+  return NextResponse.next();
 }
 
 export const config = {

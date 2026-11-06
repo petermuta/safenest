@@ -10,7 +10,7 @@ import { useTheme } from '../src/lib/theme';
 
 /** Sends people to the right part of the app for their role. */
 function Gate() {
-  const { mode, session } = useAuth();
+  const { mode, userId } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const { c, dark } = useTheme();
@@ -28,8 +28,8 @@ function Gate() {
   }, [mode, segments, router]);
 
   useEffect(() => {
-    if (session?.user.id) registerForPush(session.user.id).catch(() => {});
-  }, [session?.user.id]);
+    if (userId) registerForPush().catch(() => {});
+  }, [userId]);
 
   // Tapping an SOS push opens the alert.
   useEffect(() => {

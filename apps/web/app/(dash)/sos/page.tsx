@@ -1,10 +1,11 @@
 'use client';
 
-import { formatUgPhone, SOS_BUCKET, type SosAlert, type SosEvidence, type SosStatus } from '@safenest/shared';
-import { useCallback, useEffect, useState } from 'react';
+import { formatUgPhone, type SosAlert, type SosEvidence, type SosStatus } from '@safenest/shared';
+import { useRef, useState } from 'react';
 import { useEstate } from '@/components/estate-context';
 import { Badge, NoEstate, PageTitle } from '@/components/shell';
-import { createClient, errorMessage } from '@/lib/supabase/client';
+import { api, errorMessage } from '@/lib/api';
+import { usePoll } from '@/lib/use-poll';
 
 type Row = SosAlert & {
   resident: { full_name: string | null; phone: string } | null;
@@ -35,60 +36,49 @@ function beep() {
 const tone = (s: SosStatus) => (s === 'active' ? 'red' : s === 'acknowledged' ? 'amber' : s === 'resolved' ? 'green' : 'grey');
 
 export default function SosPage() {
-  const supabase = createClient();
-  const { current, estates } = useEstate();
+  const { current, estates, loaded } = useEstate();
   const [rows, setRows] = useState<Row[]>([]);
-  const [urls, setUrls] = useState<Record<string, string>>({});
+  const known = useRef<Set<string> | null>(null);
 
-  const load = useCallback(async () => {
+  // Checks for new alerts every 5 seconds; beeps and notifies when one appears.
+  const load = async () => {
     if (!current) return;
-    const { data } = await supabase
-      .from('sos_alerts')
-      .select(`*, resident:profiles!sos_alerts_user_id_fkey(full_name, phone), unit:units(label),
-               station:police_stations(name, phone), evidence:sos_evidence(*), notifications:notification_log(recipient_type, channel, status)`)
-      .eq('estate_id', current.estate.id)
-      .order('created_at', { ascending: false })
-      .limit(50);
-    const list = (data as Row[]) ?? [];
-    setRows(list);
-
-    // Short-lived signed links for evidence on open alerts.
-    const paths = list.filter((r) => r.status === 'active' || r.status === 'acknowledged').flatMap((r) => r.evidence.map((e) => e.storage_path));
-    if (paths.length) {
-      const { data: signed } = await supabase.storage.from(SOS_BUCKET).createSignedUrls(paths, 3600);
-      setUrls(Object.fromEntries((signed ?? []).filter((s) => s.signedUrl && s.path).map((s) => [s.path as string, s.signedUrl as string])));
+    const list = await api<Row[]>(`/api/estates/${current.estate.id}/sos`).catch(() => null);
+    if (!list) return;
+    const ids = new Set(list.map((r) => r.id));
+    if (known.current && list.some((r) => r.status === 'active' && !known.current!.has(r.id))) {
+      beep();
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        new Notification('SafeNest SOS', { body: 'A resident has raised an SOS.' });
+      }
     }
-  }, [current, supabase]);
-
-  useEffect(() => {
-    load();
-    if (!current) return;
-    const id = current.estate.id;
-    const ch = supabase.channel(`web-sos-${id}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sos_alerts', filter: `estate_id=eq.${id}` }, () => {
-        load();
-        beep();
-        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') new Notification('SafeNest SOS', { body: 'A resident has raised an SOS.' });
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'sos_alerts', filter: `estate_id=eq.${id}` }, load)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sos_evidence' }, load)
-      .subscribe();
-    if (typeof Notification !== 'undefined' && Notification.permission === 'default') Notification.requestPermission();
-    return () => { supabase.removeChannel(ch); };
-  }, [load, current, supabase]);
-
-  const setStatus = async (id: string, status: SosStatus) => {
-    const { error } = await supabase.rpc('update_sos_status', { p_alert: id, p_status: status });
-    if (error) alert(errorMessage(error)); else load();
+    known.current = ids;
+    setRows(list);
   };
 
+  usePoll(load, 5_000, [current?.estate.id]);
+
+  const askNotify = () => {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') Notification.requestPermission();
+  };
+
+  const setStatus = async (id: string, status: SosStatus) => {
+    try {
+      await api(`/api/sos/${id}/status`, { body: { status } });
+      load();
+    } catch (e) {
+      alert(errorMessage(e));
+    }
+  };
+
+  if (!loaded) return null;
   if (!estates.length) return <NoEstate />;
   const open = rows.filter((r) => r.status === 'active' || r.status === 'acknowledged');
   const closed = rows.filter((r) => !open.includes(r));
 
   return (
     <>
-      <PageTitle title="SOS alerts" sub="Live — new alerts appear here instantly" />
+      <PageTitle title="SOS alerts" sub="Checks for new alerts every 5 seconds" action={<button className="btn btn-secondary" onClick={askNotify}>Enable desktop alerts</button>} />
 
       {!open.length && (
         <div className="card mb-6 p-6 text-center text-muted">No open alerts. Keep this page open on the gate or office computer to see alerts live.</div>
@@ -128,8 +118,7 @@ export default function SosPage() {
                   <div className="label">Evidence ({r.evidence.length})</div>
                   <div className="space-y-2">
                     {r.evidence.map((e) => {
-                      const url = urls[e.storage_path];
-                      if (!url) return <div key={e.id} className="text-sm text-muted">{e.kind} — loading…</div>;
+                      const url = `/api/evidence/${e.id}`;
                       if (e.kind === 'photo') return <a key={e.id} href={url} target="_blank" rel="noreferrer"><img src={url} alt="SOS photo" className="h-24 rounded-xl object-cover" /></a>;
                       if (e.kind === 'video') return <video key={e.id} src={url} controls className="w-full rounded-xl" />;
                       return <audio key={e.id} src={url} controls className="w-full" />;

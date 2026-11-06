@@ -1,7 +1,6 @@
-import type { Session } from '@supabase/supabase-js';
 import type { Estate, MemberRole, Profile, Unit } from '@safenest/shared';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { supabase } from './supabase';
+import { api, clearToken, loadToken, saveToken, setSignedOutHandler } from './api';
 
 export interface MembershipWithEstate {
   id: string;
@@ -14,11 +13,12 @@ export interface MembershipWithEstate {
 export type Mode = 'loading' | 'signed_out' | 'unassigned' | 'resident' | 'staff';
 
 interface AuthState {
-  session: Session | null;
+  userId: string | null;
   profile: Profile | null;
   memberships: MembershipWithEstate[];
   active: MembershipWithEstate | null;
   mode: Mode;
+  signIn: (phone: string, code: string) => Promise<void>;
   refresh: () => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -26,44 +26,33 @@ interface AuthState {
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [memberships, setMemberships] = useState<MembershipWithEstate[]>([]);
-  const [loadingProfile, setLoadingProfile] = useState(false);
 
-  const load = useCallback(async (s: Session | null) => {
-    if (!s) {
-      setProfile(null);
-      setMemberships([]);
-      return;
-    }
-    setLoadingProfile(true);
-    const [{ data: p }, { data: m }] = await Promise.all([
-      supabase.from('profiles').select('*').eq('id', s.user.id).single(),
-      supabase
-        .from('memberships')
-        .select('id, role, estate:estates(id, name, lat, lng, gate_phone, subscription_status), unit:units(id, label, block)')
-        .eq('user_id', s.user.id)
-        .eq('active', true),
-    ]);
-    setProfile((p as Profile) ?? null);
-    setMemberships((m as unknown as MembershipWithEstate[]) ?? []);
-    setLoadingProfile(false);
+  const reset = useCallback(() => {
+    setProfile(null);
+    setMemberships([]);
   }, []);
 
+  const refresh = useCallback(async () => {
+    try {
+      const me = await api<{ profile: Profile; memberships: MembershipWithEstate[] }>('/api/me');
+      setProfile(me.profile);
+      setMemberships(me.memberships);
+    } catch (e: any) {
+      if (e?.status === 401) reset();
+      // Offline: keep whatever we had so the SOS button still shows.
+    }
+  }, [reset]);
+
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data }) => {
-      setSession(data.session);
-      await load(data.session);
+    setSignedOutHandler(reset);
+    loadToken().then(async (t) => {
+      if (t) await refresh();
       setReady(true);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
-      setSession(s);
-      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'USER_UPDATED') load(s);
-    });
-    return () => sub.subscription.unsubscribe();
-  }, [load]);
+  }, [refresh, reset]);
 
   // Staff membership wins (a manager who also lives on the estate gets the staff app).
   const active =
@@ -72,22 +61,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     null;
 
   let mode: Mode = 'loading';
-  if (ready && !loadingProfile) {
-    if (!session) mode = 'signed_out';
+  if (ready) {
+    if (!profile) mode = 'signed_out';
     else if (!active) mode = 'unassigned';
     else mode = active.role === 'resident' ? 'resident' : 'staff';
   }
 
   const value: AuthState = {
-    session,
+    userId: profile?.id ?? null,
     profile,
     memberships,
     active,
     mode,
-    refresh: () => load(session),
+    signIn: async (phone, code) => {
+      const { token } = await api<{ token: string }>('/api/auth/verify', { body: { phone, code } });
+      await saveToken(token);
+      await refresh();
+    },
+    refresh,
     signOut: async () => {
-      if (profile) await supabase.from('profiles').update({ expo_push_token: null }).eq('id', profile.id);
-      await supabase.auth.signOut();
+      await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
+      await clearToken();
+      reset();
     },
   };
 

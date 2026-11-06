@@ -1,10 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useEstate } from '@/components/estate-context';
 import { Badge, NoEstate, PageTitle } from '@/components/shell';
-import { createClient } from '@/lib/supabase/client';
+import { api } from '@/lib/api';
+import { usePoll } from '@/lib/use-poll';
 
 interface Stats {
   units: number;
@@ -17,28 +18,17 @@ interface Stats {
 }
 
 export default function Overview() {
-  const supabase = createClient();
-  const { current, estates } = useEstate();
+  const { current, estates, loaded } = useEstate();
   const [s, setS] = useState<Stats | null>(null);
 
-  useEffect(() => {
+  usePoll(async () => {
     if (!current) return;
-    const id = current.estate.id;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const c = (q: PromiseLike<{ count: number | null }>) => Promise.resolve(q).then((r) => r.count ?? 0);
-    Promise.all([
-      c(supabase.from('units').select('id', { count: 'exact', head: true }).eq('estate_id', id)),
-      c(supabase.from('memberships').select('id', { count: 'exact', head: true }).eq('estate_id', id).eq('role', 'resident').eq('active', true)),
-      c(supabase.from('memberships').select('id', { count: 'exact', head: true }).eq('estate_id', id).eq('role', 'guard').eq('active', true)),
-      c(supabase.from('visitor_logs').select('id', { count: 'exact', head: true }).eq('estate_id', id).gte('entry_at', today.toISOString())),
-      c(supabase.from('visitor_logs').select('id', { count: 'exact', head: true }).eq('estate_id', id).is('exit_at', null).gte('entry_at', new Date(Date.now() - 86400000).toISOString())),
-      c(supabase.from('sos_alerts').select('id', { count: 'exact', head: true }).eq('estate_id', id).in('status', ['active', 'acknowledged'])),
-      c(supabase.from('invitations').select('id', { count: 'exact', head: true }).eq('estate_id', id).is('accepted_at', null)),
-    ]).then(([units, residents, guards, visitorsToday, insideNow, openSos, pendingInvites]) =>
-      setS({ units, residents, guards, visitorsToday, insideNow, openSos, pendingInvites }));
-  }, [current, supabase]);
+    const since = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
+    const o = await api<Stats>(`/api/estates/${current.estate.id}/overview?since=${encodeURIComponent(since)}`).catch(() => null);
+    if (o) setS(o);
+  }, 15_000, [current?.estate.id]);
 
+  if (!loaded) return null;
   if (!estates.length) return <><PageTitle title="Welcome to SafeNest" /><NoEstate /></>;
   if (!current) return null;
 

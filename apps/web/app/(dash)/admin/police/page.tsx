@@ -4,21 +4,20 @@ import type { PoliceStation } from '@safenest/shared';
 import { useCallback, useEffect, useState } from 'react';
 import { useEstate } from '@/components/estate-context';
 import { Badge, PageTitle } from '@/components/shell';
-import { createClient, errorMessage } from '@/lib/supabase/client';
+import { api, errorMessage } from '@/lib/api';
 
 const blank = { name: '', district: '', phone: '', lat: '', lng: '' };
 
 export default function PolicePage() {
-  const supabase = createClient();
   const { appRole } = useEstate();
   const [rows, setRows] = useState<PoliceStation[]>([]);
   const [form, setForm] = useState(blank);
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const { data } = await supabase.from('police_stations').select('*').order('district').order('name');
-    setRows((data as PoliceStation[]) ?? []);
-  }, [supabase]);
+    const data = await api<PoliceStation[]>('/api/admin/police').catch(() => null);
+    if (data) setRows(data);
+  }, []);
   useEffect(() => { load(); }, [load]);
 
   if (appRole !== 'super_admin') return <p className="text-muted">Only the SafeNest super admin manages police stations.</p>;
@@ -28,16 +27,17 @@ export default function PolicePage() {
     setErr(null);
     const phone = form.phone.replace(/[^\d+]/g, '');
     if (!/^\+256\d{9}$/.test(phone)) return setErr('Phone must be +256 followed by 9 digits');
-    const { error } = await supabase.from('police_stations').insert({
-      name: form.name, district: form.district || null, phone, lat: Number(form.lat), lng: Number(form.lng),
-    });
-    if (error) return setErr(errorMessage(error));
-    setForm(blank);
-    load();
+    try {
+      await api('/api/admin/police', { body: { name: form.name, district: form.district || null, phone, lat: Number(form.lat), lng: Number(form.lng) } });
+      setForm(blank);
+      load();
+    } catch (e) {
+      setErr(errorMessage(e));
+    }
   };
 
   const toggle = async (s: PoliceStation) => {
-    await supabase.from('police_stations').update({ active: !s.active }).eq('id', s.id);
+    await api(`/api/admin/police/${s.id}`, { method: 'PATCH', body: { active: !s.active } }).catch((e) => alert(errorMessage(e)));
     load();
   };
 

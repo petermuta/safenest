@@ -1,8 +1,8 @@
-import { SOS_BUCKET, type EvidenceKind } from '@safenest/shared';
+import type { EvidenceKind } from '@safenest/shared';
 import * as Location from 'expo-location';
 import * as SMS from 'expo-sms';
 import type { MembershipWithEstate } from './auth';
-import { supabase } from './supabase';
+import { api } from './api';
 
 interface Fix {
   lat: number;
@@ -37,23 +37,14 @@ export interface RaisedSos {
   approximate: boolean;
 }
 
-/**
- * 1. Create the alert (database picks the nearest police station)
- * 2. Ask the edge function to push + SMS guards, manager and police
- */
+/** Sends the alert: the server saves it, picks the nearest police station and notifies everyone. */
 export async function raiseSos(m: MembershipWithEstate): Promise<RaisedSos> {
   const fix = await getFix(m);
-  const { data: alertId, error } = await supabase.rpc('trigger_sos', {
-    p_lat: fix.lat,
-    p_lng: fix.lng,
-    p_accuracy: fix.accuracy,
-    p_estate: m.estate.id,
+  // The server saves the alert, then pushes/SMSes guards, manager and police.
+  const { alert_id } = await api<{ alert_id: string }>('/api/sos', {
+    body: { lat: fix.lat, lng: fix.lng, accuracy: fix.accuracy, estate_id: m.estate.id },
   });
-  if (error || !alertId) throw error ?? new Error('Could not create the alert');
-
-  // Don't await failures here: the alert row already exists and staff see it live.
-  supabase.functions.invoke('sos-dispatch', { body: { alert_id: alertId } }).catch(() => {});
-  return { alertId: alertId as string, approximate: fix.approximate };
+  return { alertId: alert_id, approximate: fix.approximate };
 }
 
 /** No data connection: open the SMS composer to the gate with the location filled in. */
@@ -69,23 +60,19 @@ export async function smsFallback(m: MembershipWithEstate) {
   return true;
 }
 
-const EXT: Record<EvidenceKind, { ext: string; type: string }> = {
+const MIME: Record<EvidenceKind, { ext: string; type: string }> = {
   photo: { ext: 'jpg', type: 'image/jpeg' },
   video: { ext: 'mp4', type: 'video/mp4' },
   audio: { ext: 'm4a', type: 'audio/m4a' },
 };
 
+/** Uploads one evidence file (photo, short video or audio clip) to the alert. Max ~5.5 MB. */
 export async function uploadEvidence(alertId: string, kind: EvidenceKind, uri: string, mime?: string) {
-  const { ext, type } = EXT[kind];
   const isMov = kind === 'video' && uri.toLowerCase().endsWith('.mov');
-  const path = `${alertId}/${kind}-${Date.now()}.${isMov ? 'mov' : ext}`;
-  const body = await (await fetch(uri)).arrayBuffer();
-
-  const { error } = await supabase.storage
-    .from(SOS_BUCKET)
-    .upload(path, body, { contentType: mime ?? (isMov ? 'video/quicktime' : type), upsert: false });
-  if (error) throw error;
-
-  const { error: rowErr } = await supabase.from('sos_evidence').insert({ alert_id: alertId, kind, storage_path: path });
-  if (rowErr) throw rowErr;
+  const type = mime ?? (isMov ? 'video/quicktime' : MIME[kind].type);
+  const form = new FormData();
+  form.append('kind', kind);
+  // React Native's FormData accepts a { uri, name, type } file reference.
+  form.append('file', { uri, name: `${kind}.${isMov ? 'mov' : MIME[kind].ext}`, type } as unknown as Blob);
+  await api(`/api/sos/${alertId}/evidence`, { form });
 }

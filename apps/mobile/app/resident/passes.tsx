@@ -1,11 +1,12 @@
 import type { GuestPass } from '@safenest/shared';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Badge, Body, Button, Card, Empty, Title } from '../../src/components/ui';
 import { useAuth } from '../../src/lib/auth';
-import { supabase } from '../../src/lib/supabase';
+import { api } from '../../src/lib/api';
+import { useFocusPoll } from '../../src/lib/poll';
 import { fmtTime, passTone } from '../../src/lib/format';
 import { useTheme } from '../../src/lib/theme';
 
@@ -19,17 +20,13 @@ export default function Passes() {
   const load = useCallback(async () => {
     if (!active?.unit) return;
     setLoading(true);
-    const { data } = await supabase
-      .from('guest_passes')
-      .select('*')
-      .eq('unit_id', active.unit.id)
-      .order('created_at', { ascending: false })
-      .limit(50);
-    setPasses((data as GuestPass[]) ?? []);
+    const data = await api<GuestPass[]>(`/api/passes?unit_id=${active.unit.id}`).catch(() => null);
+    if (data) setPasses(data);
     setLoading(false);
   }, [active?.unit]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  // Refresh every 20s so a pass flips to "used" when the guest arrives.
+  useFocusPoll(load, 20_000, [load]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: c.background }} edges={['top']}>

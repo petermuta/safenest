@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Alert, View } from 'react-native';
 import { Body, Button, Card, Chip, Input, Label, Screen, Title } from '../../src/components/ui';
 import { useAuth } from '../../src/lib/auth';
-import { errorMessage, supabase } from '../../src/lib/supabase';
+import { api, errorMessage } from '../../src/lib/api';
 
 const DURATIONS = [
   { label: '2 hours', hours: 2 },
@@ -27,16 +27,21 @@ export default function NewPass() {
     if (!active?.unit) return;
     if (!name.trim()) return Alert.alert('Guest name needed', 'Who is visiting?');
     setBusy(true);
-    const { data, error } = await supabase.rpc('create_guest_pass', {
-      p_unit: active.unit.id,
-      p_guest_name: name.trim(),
-      p_valid_until: new Date(Date.now() + hours * 3600_000).toISOString(),
-      p_guest_phone: phone.trim() || null,
-      p_vehicle_plate: plate.trim() || null,
-    });
-    setBusy(false);
-    if (error) return Alert.alert('Pass not created', errorMessage(error));
-    router.replace(`/pass/${(data as GuestPass).id}`);
+    try {
+      const pass = await api<GuestPass>('/api/passes', {
+        body: {
+          unit_id: active.unit.id,
+          guest_name: name.trim(),
+          valid_until: new Date(Date.now() + hours * 3600_000).toISOString(),
+          guest_phone: phone.trim() || null,
+          vehicle_plate: plate.trim() || null,
+        },
+      });
+      router.replace(`/pass/${pass.id}`);
+    } catch (e) {
+      Alert.alert('Pass not created', errorMessage(e));
+      setBusy(false);
+    }
   };
 
   return (

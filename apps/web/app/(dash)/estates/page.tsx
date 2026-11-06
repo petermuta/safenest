@@ -5,12 +5,11 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useEstate } from '@/components/estate-context';
 import { Badge, PageTitle } from '@/components/shell';
-import { createClient, errorMessage } from '@/lib/supabase/client';
+import { api, errorMessage } from '@/lib/api';
 
 export default function EstatesPage() {
-  const supabase = createClient();
   const router = useRouter();
-  const { estates, reload, setCurrent, appRole } = useEstate();
+  const { estates, loaded, reload, setCurrent, appRole } = useEstate();
   const [form, setForm] = useState({ name: '', district: '', address: '', lat: '', lng: '' });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -24,18 +23,23 @@ export default function EstatesPage() {
     e.preventDefault();
     setBusy(true);
     setErr(null);
-    const { data, error } = await supabase.rpc('create_estate', {
-      p_name: form.name,
-      p_district: form.district || null,
-      p_address: form.address || null,
-      p_lat: form.lat ? Number(form.lat) : null,
-      p_lng: form.lng ? Number(form.lng) : null,
-    });
-    setBusy(false);
-    if (error) return setErr(errorMessage(error));
-    await reload();
-    setCurrent(data.id);
-    router.push(`/estates/${data.id}`);
+    try {
+      const estate = await api<{ id: string }>('/api/estates', {
+        body: {
+          name: form.name,
+          district: form.district || null,
+          address: form.address || null,
+          lat: form.lat ? Number(form.lat) : null,
+          lng: form.lng ? Number(form.lng) : null,
+        },
+      });
+      await reload();
+      setCurrent(estate.id);
+      router.push(`/estates/${estate.id}`);
+    } catch (e) {
+      setErr(errorMessage(e));
+      setBusy(false);
+    }
   };
 
   return (
@@ -46,7 +50,7 @@ export default function EstatesPage() {
         action={appRole !== 'guard' && <button className="btn btn-primary" onClick={() => setShowForm((v) => !v)}>+ Register estate</button>}
       />
 
-      {(showForm || estates.length === 0) && (
+      {(showForm || (loaded && estates.length === 0)) && (
         <form onSubmit={create} className="card mb-6 grid gap-4 p-6 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <label className="label">Estate name</label>

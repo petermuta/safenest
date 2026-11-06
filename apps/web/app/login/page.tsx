@@ -3,10 +3,9 @@
 import { formatUgPhone, normalizeUgPhone } from '@safenest/shared';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { createClient, errorMessage } from '@/lib/supabase/client';
+import { api, errorMessage } from '@/lib/api';
 
 export default function LoginPage() {
-  const supabase = createClient();
   const router = useRouter();
   const [raw, setRaw] = useState('');
   const [phone, setPhone] = useState<string | null>(null);
@@ -20,10 +19,14 @@ export default function LoginPage() {
     if (!p) return setErr('Enter a Ugandan mobile number, e.g. 0772 123 456');
     setBusy(true);
     setErr(null);
-    const { error } = await supabase.auth.signInWithOtp({ phone: p });
-    setBusy(false);
-    if (error) return setErr(errorMessage(error));
-    setPhone(p);
+    try {
+      await api('/api/auth/otp', { body: { phone: p } });
+      setPhone(p);
+    } catch (e) {
+      setErr(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const verify = async (e: React.FormEvent) => {
@@ -31,11 +34,14 @@ export default function LoginPage() {
     if (!phone) return;
     setBusy(true);
     setErr(null);
-    const { error } = await supabase.auth.verifyOtp({ phone, token: code, type: 'sms' });
-    setBusy(false);
-    if (error) return setErr(errorMessage(error));
-    router.replace('/');
-    router.refresh();
+    try {
+      await api('/api/auth/verify', { body: { phone, code } });
+      router.replace('/');
+      router.refresh();
+    } catch (e) {
+      setErr(errorMessage(e));
+      setBusy(false);
+    }
   };
 
   return (

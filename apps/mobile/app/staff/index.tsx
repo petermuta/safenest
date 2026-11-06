@@ -6,7 +6,7 @@ import { Text, View } from 'react-native';
 import { Body, Button, Card, Input, Screen, Title } from '../../src/components/ui';
 import { useAuth } from '../../src/lib/auth';
 import { fmtTime } from '../../src/lib/format';
-import { errorMessage, supabase } from '../../src/lib/supabase';
+import { api, errorMessage } from '../../src/lib/api';
 import { useTheme } from '../../src/lib/theme';
 
 const REASONS: Record<PassVerification['reason'], string> = {
@@ -34,16 +34,15 @@ export default function GateVerify() {
     locked.current = true;
     setBusy(true);
     setErr(null);
-    const { data, error } = await supabase.rpc('verify_guest_pass', { p_estate: active.estate.id, p_input: input });
-    setBusy(false);
-    setScanning(false);
-    if (error) {
-      setErr(errorMessage(error));
-    } else {
-      const r = data as PassVerification;
+    try {
+      const r = await api<PassVerification>('/api/gate/verify', { body: { estate_id: active.estate.id, input } });
       setResult(r);
       Haptics.notificationAsync(r.ok ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Error);
+    } catch (e) {
+      setErr(errorMessage(e));
     }
+    setBusy(false);
+    setScanning(false);
     setCode('');
     setTimeout(() => { locked.current = false; }, 1200);
   };

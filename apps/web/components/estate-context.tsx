@@ -2,7 +2,7 @@
 
 import type { AppRole, Estate, MemberRole } from '@safenest/shared';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { api } from '@/lib/api';
 
 export interface StaffEstate {
   role: MemberRole;
@@ -13,6 +13,7 @@ interface Ctx {
   userId: string;
   appRole: AppRole;
   estates: StaffEstate[];
+  loaded: boolean;
   current: StaffEstate | null;
   setCurrent: (id: string) => void;
   reload: () => Promise<void>;
@@ -23,29 +24,21 @@ const KEY = 'safenest.estate';
 
 /** Estates the signed-in person manages or guards, plus which one is selected. */
 export function EstateProvider({ userId, appRole, children }: { userId: string; appRole: AppRole; children: ReactNode }) {
-  const supabase = createClient();
   const [estates, setEstates] = useState<StaffEstate[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [currentId, setCurrentId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    let list: StaffEstate[];
-    if (appRole === 'super_admin') {
-      const { data } = await supabase.from('estates').select('*').order('name');
-      list = (data ?? []).map((estate) => ({ role: 'manager' as const, estate: estate as Estate }));
-    } else {
-      const { data } = await supabase
-        .from('memberships')
-        .select('role, estate:estates(*)')
-        .eq('user_id', userId)
-        .eq('active', true)
-        .in('role', ['manager', 'guard']);
-      list = (data as unknown as StaffEstate[]) ?? [];
-    }
+    const list = await api<StaffEstate[]>('/api/estates').catch(() => []);
     setEstates(list);
+    setLoaded(true);
     let saved: string | null = null;
     try { saved = localStorage.getItem(KEY); } catch {}
-    setCurrentId((prev) => prev ?? (list.find((e) => e.estate.id === saved)?.estate.id ?? list[0]?.estate.id ?? null));
-  }, [supabase, userId, appRole]);
+    setCurrentId((prev) =>
+      prev && list.some((e) => e.estate.id === prev)
+        ? prev
+        : list.find((e) => e.estate.id === saved)?.estate.id ?? list[0]?.estate.id ?? null);
+  }, []);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -56,7 +49,7 @@ export function EstateProvider({ userId, appRole, children }: { userId: string; 
 
   const current = estates.find((e) => e.estate.id === currentId) ?? null;
   return (
-    <EstateContext.Provider value={{ userId, appRole, estates, current, setCurrent, reload }}>
+    <EstateContext.Provider value={{ userId, appRole, estates, loaded, current, setCurrent, reload }}>
       {children}
     </EstateContext.Provider>
   );

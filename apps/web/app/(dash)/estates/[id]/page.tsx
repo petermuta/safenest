@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useEstate } from '@/components/estate-context';
 import { Badge, PageTitle } from '@/components/shell';
-import { createClient, errorMessage } from '@/lib/supabase/client';
+import { api, errorMessage } from '@/lib/api';
 
 interface MemberRow {
   id: string;
@@ -29,7 +29,6 @@ function expandUnits(input: string): string[] {
 
 export default function EstateDetail() {
   const { id } = useParams<{ id: string }>();
-  const supabase = createClient();
   const { reload: reloadEstates, setCurrent } = useEstate();
   const [estate, setEstate] = useState<Estate | null>(null);
   const [units, setUnits] = useState<Unit[]>([]);
@@ -42,54 +41,61 @@ export default function EstateDetail() {
   const [member, setMember] = useState({ name: '', phone: '', role: 'resident' as MemberRole, unit: '' });
   const [filter, setFilter] = useState('');
 
+  const [denied, setDenied] = useState<string | null>(null);
+
   const load = useCallback(async () => {
-    const [e, u, m, i] = await Promise.all([
-      supabase.from('estates').select('*').eq('id', id).single(),
-      supabase.from('units').select('*').eq('estate_id', id).order('label'),
-      supabase.from('memberships').select('id, role, unit_id, profile:profiles(full_name, phone)').eq('estate_id', id).eq('active', true),
-      supabase.from('invitations').select('*').eq('estate_id', id).is('accepted_at', null).order('created_at', { ascending: false }),
-    ]);
-    setEstate(e.data as Estate);
-    setSettings({ name: e.data?.name ?? '', gate_phone: e.data?.gate_phone ?? '' });
-    setUnits((u.data as Unit[]) ?? []);
-    setMembers((m.data as unknown as MemberRow[]) ?? []);
-    setInvites((i.data as Invitation[]) ?? []);
-  }, [id, supabase]);
+    try {
+      const d = await api<{ estate: Estate; units: Unit[]; members?: MemberRow[]; invites?: Invitation[] }>(`/api/estates/${id}`);
+      setEstate(d.estate);
+      setSettings({ name: d.estate.name ?? '', gate_phone: d.estate.gate_phone ?? '' });
+      setUnits(d.units);
+      setMembers(d.members ?? []);
+      setInvites(d.invites ?? []);
+    } catch (e) {
+      setDenied(errorMessage(e));
+    }
+  }, [id]);
 
   useEffect(() => { load(); setCurrent(id); }, [load, id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const unitLabel = useMemo(() => Object.fromEntries(units.map((u) => [u.id, u.label])), [units]);
   const flash = (ok: boolean, text: string) => { setMsg({ ok, text }); setTimeout(() => setMsg(null), 5000); };
 
+  /** Runs a change, shows the result, reloads the page data. */
+  const run = async (fn: () => Promise<unknown>, success?: string) => {
+    try {
+      await fn();
+      if (success) flash(true, success);
+      await load();
+      return true;
+    } catch (e) {
+      flash(false, errorMessage(e));
+      return false;
+    }
+  };
+
   const saveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    let gate: string | null = null;
-    if (settings.gate_phone.trim()) {
-      gate = normalizeUgPhone(settings.gate_phone);
-      if (!gate) return flash(false, 'Gate phone must be a Ugandan mobile number');
+    if (settings.gate_phone.trim() && !normalizeUgPhone(settings.gate_phone)) {
+      return flash(false, 'Gate phone must be a Ugandan mobile number');
     }
-    const { error } = await supabase.from('estates').update({ name: settings.name.trim(), gate_phone: gate }).eq('id', id);
-    if (error) return flash(false, errorMessage(error));
-    flash(true, 'Estate saved');
-    load();
-    reloadEstates();
+    if (await run(() => api(`/api/estates/${id}`, { method: 'PATCH', body: { name: settings.name, gate_phone: settings.gate_phone } }), 'Estate saved')) {
+      reloadEstates();
+    }
   };
 
   const addUnits = async (e: React.FormEvent) => {
     e.preventDefault();
     const labels = expandUnits(unitInput).filter((l) => !units.some((u) => u.label === l));
     if (!labels.length) return flash(false, 'No new units to add');
-    const { error } = await supabase.from('units').insert(labels.map((label) => ({ estate_id: id, label })));
-    if (error) return flash(false, errorMessage(error));
-    setUnitInput('');
-    flash(true, `Added ${labels.length} unit${labels.length > 1 ? 's' : ''}`);
-    load();
+    if (await run(() => api(`/api/estates/${id}/units`, { body: { labels } }), `Added ${labels.length} unit${labels.length > 1 ? 's' : ''}`)) {
+      setUnitInput('');
+    }
   };
 
   const deleteUnit = async (u: Unit) => {
     if (!confirm(`Delete unit ${u.label}? Residents linked to it will lose their unit.`)) return;
-    const { error } = await supabase.from('units').delete().eq('id', u.id);
-    if (error) flash(false, errorMessage(error)); else load();
+    await run(() => api(`/api/units/${u.id}`, { method: 'DELETE' }));
   };
 
   const addMember = async (e: React.FormEvent) => {
@@ -97,28 +103,30 @@ export default function EstateDetail() {
     const phone = normalizeUgPhone(member.phone);
     if (!phone) return flash(false, 'Enter a valid Ugandan mobile number');
     if (member.role === 'resident' && !member.unit) return flash(false, 'Pick the resident’s unit');
-    const { data, error } = await supabase.rpc('invite_member', {
-      p_estate: id, p_phone: phone, p_full_name: member.name, p_role: member.role, p_unit: member.unit || null,
-    });
-    if (error) return flash(false, errorMessage(error));
-    flash(true, data.status === 'added'
-      ? `${member.name || phone} added — they already use SafeNest`
-      : `${member.name || phone} registered — they get access when they sign in with ${formatUgPhone(phone)}`);
-    setMember({ name: '', phone: '', role: member.role, unit: '' });
-    load();
+    try {
+      const r = await api<{ status: string }>(`/api/estates/${id}/members`, {
+        body: { phone, full_name: member.name, role: member.role, unit_id: member.unit || null },
+      });
+      flash(true, r.status === 'added'
+        ? `${member.name || phone} added — they already use SafeNest`
+        : `${member.name || phone} registered — they get access when they sign in with ${formatUgPhone(phone)}`);
+      setMember({ name: '', phone: '', role: member.role, unit: '' });
+      load();
+    } catch (err) {
+      flash(false, errorMessage(err));
+    }
   };
 
   const removeMember = async (m: MemberRow) => {
     if (!confirm(`Remove ${m.profile?.full_name ?? m.profile?.phone} from this estate?`)) return;
-    const { error } = await supabase.from('memberships').delete().eq('id', m.id);
-    if (error) flash(false, errorMessage(error)); else load();
+    await run(() => api(`/api/memberships/${m.id}`, { method: 'DELETE' }));
   };
 
   const cancelInvite = async (inv: Invitation) => {
-    const { error } = await supabase.from('invitations').delete().eq('id', inv.id);
-    if (error) flash(false, errorMessage(error)); else load();
+    await run(() => api(`/api/invitations/${inv.id}`, { method: 'DELETE' }));
   };
 
+  if (denied) return <p className="text-muted">{denied}</p>;
   if (!estate) return <p className="text-muted">Loading…</p>;
 
   const q = filter.toLowerCase();

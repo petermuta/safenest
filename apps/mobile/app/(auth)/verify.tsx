@@ -2,13 +2,15 @@ import { formatUgPhone } from '@safenest/shared';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Body, Button, Card, Input, Screen, Title } from '../../src/components/ui';
-import { errorMessage, supabase } from '../../src/lib/supabase';
+import { api, errorMessage } from '../../src/lib/api';
+import { useAuth } from '../../src/lib/auth';
 import { useTheme } from '../../src/lib/theme';
 
 export default function Verify() {
   const { phone } = useLocalSearchParams<{ phone: string }>();
   const router = useRouter();
   const { c } = useTheme();
+  const { signIn } = useAuth();
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -23,16 +25,18 @@ export default function Verify() {
     if (token.length !== 6) return;
     setBusy(true);
     setErr(null);
-    const { error } = await supabase.auth.verifyOtp({ phone, token, type: 'sms' });
-    setBusy(false);
-    if (error) setErr(errorMessage(error));
-    // On success the auth listener routes to the right home screen.
+    try {
+      await signIn(phone, token);
+      // The root layout now routes to the right home screen.
+    } catch (e) {
+      setErr(errorMessage(e));
+      setBusy(false);
+    }
   };
 
   const resend = async () => {
     setWait(60);
-    const { error } = await supabase.auth.signInWithOtp({ phone });
-    if (error) setErr(errorMessage(error));
+    await api('/api/auth/otp', { body: { phone } }).catch((e) => setErr(errorMessage(e)));
   };
 
   return (

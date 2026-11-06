@@ -2,7 +2,7 @@ import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
-import { supabase } from './supabase';
+import { api } from './api';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -18,7 +18,7 @@ Notifications.setNotificationHandler({
  * sos-dispatch function can reach guards and managers. Needs a development build
  * (push doesn't work in Expo Go) and a real device.
  */
-export async function registerForPush(userId: string) {
+export async function registerForPush() {
   if (!Device.isDevice) return null;
 
   if (Platform.OS === 'android') {
@@ -44,6 +44,6 @@ export async function registerForPush(userId: string) {
   }
 
   const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
-  await supabase.from('profiles').update({ expo_push_token: token }).eq('id', userId);
+  await api('/api/me', { method: 'PATCH', body: { expo_push_token: token } });
   return token;
 }

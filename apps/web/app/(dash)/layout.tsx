@@ -2,18 +2,21 @@ import type { AppRole } from '@safenest/shared';
 import { redirect } from 'next/navigation';
 import { EstateProvider } from '@/components/estate-context';
 import { Shell } from '@/components/shell';
-import { createClient } from '@/lib/supabase/server';
+import { asUser } from '@/lib/server/db';
+import { currentUserId } from '@/lib/server/session';
+
+export const dynamic = 'force-dynamic';
 
 export default async function DashLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
+  const userId = await currentUserId();
+  if (!userId) redirect('/login');
 
-  const { data: profile } = await supabase.from('profiles').select('full_name, phone, role').eq('id', user.id).single();
+  const profile = await asUser(userId, (tx) => tx.one(`select full_name, phone, role from profiles where id = auth.uid()`));
+  if (!profile) redirect('/login');
 
   return (
-    <EstateProvider userId={user.id} appRole={(profile?.role ?? 'resident') as AppRole}>
-      <Shell name={profile?.full_name ?? profile?.phone ?? ''}>{children}</Shell>
+    <EstateProvider userId={userId} appRole={profile.role as AppRole}>
+      <Shell name={profile.full_name ?? profile.phone ?? ''}>{children}</Shell>
     </EstateProvider>
   );
 }

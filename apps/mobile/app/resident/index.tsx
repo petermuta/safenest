@@ -5,7 +5,7 @@ import { SOSButton } from '../../src/components/SOSButton';
 import { Badge, Body, Button, Card, Screen, Title } from '../../src/components/ui';
 import { useAuth } from '../../src/lib/auth';
 import { raiseSos, smsFallback } from '../../src/lib/sos';
-import { errorMessage } from '../../src/lib/supabase';
+import { errorMessage } from '../../src/lib/api';
 
 export default function ResidentHome() {
   const { active, profile } = useAuth();

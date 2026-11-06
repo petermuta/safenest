@@ -1,171 +1,120 @@
 # SafeNest — Phase 1
 
-Estate security and management for Uganda. One codebase with three parts:
+Estate security and management for Uganda, running entirely on **Netlify**.
 
 | Part | What it is | Tech |
 |---|---|---|
-| `apps/mobile` | App for **residents** (SOS, guest passes) and **guards/managers** (gate check, visitor log, live alerts) | React Native, Expo SDK 58, TypeScript |
-| `apps/web` | Dashboard for **estate managers/landlords** and the **super admin** | Next.js 16, Tailwind 4 |
-| `packages/shared` | Types, colours, Uganda phone helpers used by both apps | TypeScript |
-| `supabase/` | Database, security rules, storage, SMS + SOS server functions | Postgres, Supabase, Deno |
+| `apps/web` | Web dashboard for estate managers and the super admin, **plus the API** both apps use | Next.js 16, Tailwind 4 |
+| `apps/mobile` | App for residents (SOS, guest passes) and guards/managers (gate check, visitor log, alerts) | React Native, Expo SDK 58 |
+| `netlify/database` | Database migration and tests | Netlify Database (Postgres) |
+| `packages/shared` | Types, colours, Uganda phone helpers | TypeScript |
 
-What's built in Phase 1: phone-number login (OTP by SMS), role-based access, estates/units/resident registration, one-time guest passes (6-digit code + QR) with guard verification and a visitor log, and the SOS flow (GPS + unit → guards, manager and nearest police station by push with SMS fallback, plus photo, video and silent audio evidence).
+**What's built:** phone-number login (SMS code via Africa's Talking), role-based access (super admin, estate manager, guard, resident), estates/units/resident registration, one-time guest passes (6-digit code + QR + shareable link) with guard verification and a visitor log, and SOS (GPS + unit → guards, manager and nearest police station by push with SMS fallback, plus photo, video and silent audio evidence).
 
-**Checked before hand-over:** all three TypeScript projects typecheck, the web dashboard builds, the mobile app bundles for Android, both server functions typecheck under Deno, and 41 database tests pass (`npm run test:db`) covering every role and the security rules.
-
----
-
-## How it works (in one minute)
-
-- **Login.** Everyone signs in with their phone number. Supabase creates a 6-digit code; our `send-sms-hook` function delivers it through Africa's Talking.
-- **Roles.** A person's role comes from their *membership* in an estate: `manager`, `guard` or `resident`. The super admin is set once by hand. Managers register residents and guards by phone number **before** those people install the app — when they first sign in, the database links them to their estate and unit automatically.
-- **Guest passes.** A resident creates a pass → gets a 6-digit code + QR + a shareable link (`/p/<token>`) that works on any phone, no app needed. The guard scans or types it; the database checks it's for this estate, active and in its time window, marks it used **in the same step** (so it can't be used twice), and writes the visitor log entry.
-- **SOS.** Resident holds the button for 1.5 s → the app gets GPS (falls back to the estate pin) → database creates the alert and picks the nearest police station → `sos-dispatch` pushes guards/manager, SMSes anyone the push didn't reach, and SMSes the police station a Google Maps link. The app then records audio quietly in 30-second chunks (each uploaded as it finishes) and lets the resident add photo/video. Guards and the dashboard see it live. No internet? The app opens a pre-filled SMS to the estate's gate phone.
-- **Security.** Every table has row-level security: residents see only their unit, guards/managers only their estate, signed-out visitors only the public pass page. Rules for passes, gate checks and SOS live in database functions, not in the apps, so they can't be bypassed.
+**Checked before hand-over:**
+- 46 database tests (`npm run test:db`).
+- 55 end-to-end checks against the running app on a real Postgres server (`npm run test:e2e`). They cover every role, including what each role must *not* be able to do.
+- All three projects typecheck, the web app builds, and the iPhone app bundles.
+- Not yet tested on Netlify itself: the deploy is blocked from my side (see the end).
 
 ---
 
-## Step 1 — Install the tools (once)
+## How it works
 
-You need:
+- **One Netlify site does everything.** The web dashboard and the API live in the same Next.js app; Netlify turns the API routes into server functions. The mobile app talks to the same site.
+- **Database.** Netlify Database (Postgres). The migration in `netlify/database/migrations` is applied **automatically on every deploy**, so you never touch the database directly.
+- **Login.** The API texts a 6-digit code through Africa's Talking. Only a hash of the code is stored, it expires in 10 minutes, and there's a limit of 3 codes per 10 minutes and 5 tries per code. Sessions last 30 days: an httpOnly cookie on the web, and secure phone storage in the app.
+- **Who can do what.** Every request runs inside a database transaction tagged with the signed-in user. The rules ("only this estate's guards can verify a pass", "residents only see their unit"…) live in database functions, so neither app can bypass them.
+- **Evidence.** Photos, videos and audio go into a private Netlify Blobs store. They're only served after the database confirms the viewer is the resident who raised the alert or that estate's staff. The app opens files through 10-minute links.
+- **Live updates.** The dashboard checks for new SOS alerts every 5 seconds and beeps; the guard app checks every 5 seconds and vibrates. When the app is closed, guards get a push notification.
 
-- **Node.js 20+** — https://nodejs.org
-- **Docker Desktop** — runs Supabase locally
-- **Supabase CLI** — on Mac: `brew install supabase/tap/supabase` (or use `npx supabase` everywhere below)
-- **Xcode** (Mac, for iPhone) and/or **Android Studio**
-- An **Expo** account (free) — https://expo.dev
-- An **Africa's Talking** account — https://account.africastalking.com (start in the sandbox)
+---
 
-## Step 2 — Install the project
+## Deploy to Netlify (from your phone)
 
+### 1. Put the code on GitHub
+Create an empty **private** repository called `safenest` on github.com (no README), and reconnect GitHub in Claude's settings so Claude can push. Or push it yourself from a computer:
 ```bash
 cd safenest
-npm install
+git remote add origin https://github.com/<you>/safenest.git
+git push -u origin main
 ```
 
-*Why:* one install for all workspaces. The shared package is linked into both apps automatically.
+### 2. Import it into Netlify
+In Netlify: **Add new project → Import an existing project → GitHub → safenest**.
+- **Base directory:** leave blank. If Netlify asks for a package or app to deploy, choose `apps/web`.
+- **Build command / publish:** already set in `netlify.toml`, so leave the defaults.
 
-## Step 3 — Start the database locally
+### 3. Turn on the database
+Netlify creates the database automatically on the first deploy, because `@netlify/database` is installed, and then applies the migration.
 
-```bash
-npx supabase start          # first run downloads Docker images (a few minutes)
-npx supabase db reset       # applies the 3 migrations + seed data
-npm run test:db             # optional: 41 checks of every role and rule
-npx supabase status         # prints API URL, anon key and Studio URL — keep this open
-```
+Netlify Database needs a **credit-based plan**. If the deploy says *"database feature not available for this account"*, that's the reason. You can also check under **Data & Storage → Database**.
 
-*What you get:* tables, security rules, the private `sos-evidence` storage bucket, and three **placeholder** police stations for testing.
+### 4. Add environment variables
+Go to **Project configuration → Environment variables** and add these with **Builds** and **Functions** scope:
 
-**Test logins without SMS.** `supabase/config.toml` sets fixed codes for local testing — sign in with any of these and use code **123456**:
-
-| Number to type | Use it as |
+| Name | Value |
 |---|---|
-| 0700 000 100 | Estate manager |
-| 0700 000 200 | Resident |
-| 0700 000 300 | Guard |
+| `SESSION_SECRET` | 32+ random characters (any password generator; keep it secret) |
+| `AT_USERNAME` | `sandbox` while testing, your live username later |
+| `AT_API_KEY` | from Africa's Talking |
+| `AT_SENDER_ID` | approved sender ID (e.g. `SAFENEST`); leave empty until approved |
+| `SUPER_ADMIN_PHONES` | your number, e.g. `+256772123456` (makes you super admin on sign-in) |
 
-## Step 4 — Connect Africa's Talking (real SMS)
+Then **Deploys → Trigger deploy**, because variable changes only apply after a new build. Open `https://<your-site>.netlify.app/api/health`. It should show `"ok": true` and `"sessionSecretSet": true`.
 
-1. In Africa's Talking, open the **sandbox** app and generate an API key.
-2. `cp supabase/functions/.env.example supabase/functions/.env` and fill in `AT_USERNAME=sandbox`, `AT_API_KEY`.
-3. Serve the functions:
+**Testing without SMS credit:** temporarily add `ALLOW_TEST_OTP=true` and `TEST_OTP_NUMBERS=+256700000100,+256700000200,+256700000300`. Those numbers then sign in with code `123456` and no SMS is sent. **Remove both before real people use it.**
 
+### 5. Set up your estate (on the dashboard)
+1. Sign in with your number.
+2. Go to **Police stations** and add the real stations near your estates, with numbers you've verified.
+3. **Register an estate**, add units (`A1-A10, B1-B6` expands automatically), and add residents and guards by phone number.
+4. Set the **gate phone**. Residents' phones SMS it if they press SOS with no internet.
+
+### 6. The mobile app
+On a computer, when you have one:
 ```bash
-npx supabase functions serve --env-file supabase/functions/.env
-```
-
-4. To send real OTPs locally, uncomment the `[auth.hook.send_sms]` block in `supabase/config.toml`, put the same secret in `SEND_SMS_HOOK_SECRET`, then `npx supabase stop && npx supabase start`.
-
-*Note:* the sandbox only delivers to the Africa's Talking simulator. Going live needs a live app, airtime/credit, and an approved sender ID (e.g. `SAFENEST`) — apply early, approval can take a while.
-
-## Step 5 — Run the web dashboard
-
-```bash
-cp apps/web/.env.example apps/web/.env.local   # paste API URL + anon key from `supabase status`
-npm run web                                     # http://localhost:3000
-```
-
-Then, as the manager (0700 000 100 / 123456):
-
-1. **Register an estate** (use "Use my location" for the pin).
-2. **Add units**: type `A1-A10, B1-B6` — ranges expand automatically.
-3. **Add people**: resident 0700 000 200 → unit A1; guard 0700 000 300.
-4. **Set the gate phone** (used for the no-internet SOS fallback).
-
-**Make yourself super admin** (to manage police stations) in Studio's SQL editor:
-
-```sql
-update public.profiles set role = 'super_admin' where phone = '+2567XXXXXXXX';
-```
-
-## Step 6 — Run the mobile app
-
-```bash
-cp apps/mobile/.env.example apps/mobile/.env
-# Use your computer's LAN IP (not 127.0.0.1) so your phone can reach Supabase:
-#   EXPO_PUBLIC_SUPABASE_URL=http://192.168.x.x:54321
-#   EXPO_PUBLIC_WEB_URL=http://192.168.x.x:3000
-
+cd safenest && npm install
 cd apps/mobile
+echo "EXPO_PUBLIC_API_URL=https://<your-site>.netlify.app" > .env
 npx eas login
-npx eas init                 # writes your projectId into app.json (needed for push)
-npx expo run:ios             # iPhone plugged into your Mac — builds a development app
-# or: npx expo run:android
+npx eas init                                            # sets the project id push needs
+npx eas build --platform ios --profile development      # builds in Expo's cloud, installs on your iPhone
 ```
+For the App Store: `npx eas build --platform all --profile production`, then `npx eas submit`.
 
-*Why a development build and not Expo Go:* push notifications (how guards get SOS alerts) don't work in Expo Go. Everything else does, so `npm run mobile` + Expo Go is fine for a quick look at the screens.
+---
 
-**Try the full flow** with two phones (or phone + simulator):
-
-1. Resident (0700 000 200) → **New guest pass** → Share. Open the shared link in a browser: it shows the QR and code.
-2. Guard (0700 000 300) → **Gate** → scan the QR or type the code → green "VALID PASS". Scan again → red "already used". The entry appears in **Visitors** and on the web Visitor log.
-3. Resident → **hold SOS** 1.5 s → the alert screen opens and starts recording audio. Add a photo.
-4. Guard phone gets a push → **I'm responding**. The web **SOS alerts** page shows it live with the map link, who was notified, and the evidence.
-
-## Step 7 — Go live
-
+## Run locally (optional, needs a computer)
 ```bash
-# 1. Create a project at supabase.com (choose the closest region), then:
-npx supabase link --project-ref <your-ref>
-npx supabase db push
-
-# 2. Secrets for the functions (live Africa's Talking values):
-npx supabase secrets set AT_USERNAME=<live-username> AT_API_KEY=<key> AT_SENDER_ID=SAFENEST \
-  SEND_SMS_HOOK_SECRET='v1,whsec_...' DASHBOARD_URL=https://<your-dashboard>
-
-# 3. Deploy the functions
-npm run functions:deploy
+npm install
+npm install -g netlify-cli
+netlify link            # pick the site
+netlify dev             # starts the app with a local Netlify Database and Blobs
+netlify database migrations apply
 ```
-
-In the Supabase dashboard:
-- **Authentication → Sign In / Providers → Phone**: enable.
-- **Authentication → Hooks → Send SMS hook**: type HTTPS, URL `https://<ref>.supabase.co/functions/v1/send-sms-hook`, generate the secret and put it in `SEND_SMS_HOOK_SECRET`.
-- **Remove** the test phone numbers (they only exist in your local `config.toml`, but double-check).
-
-Web: deploy `apps/web` to Vercel (root directory `apps/web`, add the two `NEXT_PUBLIC_` variables).
-Mobile: `npx eas build --platform all --profile production`, then `npx eas submit`.
+Tests: `npm run test:db` needs nothing else. `npm run test:e2e -- http://localhost:8888` needs a fresh local database and the test settings shown in `scripts/e2e.mjs`.
 
 ---
 
 ## Before real residents rely on SOS — please read
 
-- **Police stations.** There is no public Uganda Police API. SafeNest SMSes the station numbers *you* load in **Police stations** (super admin). The seeded ones are fake placeholders. Verify each number with the station (ideally get a 24-hour line) and agree the process with the district police commander before launch. The app always offers **Call 999** too.
-- **"Silent" audio.** The app plays no sounds and shows no prompts while recording, but iPhone and Android always show their microphone indicator — that can't and shouldn't be hidden. Recording is reliable while SafeNest is on screen; if the phone locks, the OS may pause it. Each 30-second chunk uploads as it finishes so earlier evidence is kept.
-- **Privacy law.** You're storing phone numbers, locations, photos and audio. Uganda's Data Protection and Privacy Act, 2019 applies — register with the Personal Data Protection Office and have a privacy notice and consent screen before launch.
-- **Evidence access.** Files are private. Only the resident and that estate's guards/manager can open them, through links that expire.
-- **SMS cost.** Each SOS sends one SMS per staff member without push, plus one to police. Budget Africa's Talking credit per estate.
+- **Police stations.** There's no public Uganda Police API. SafeNest SMSes the station numbers you enter. Verify each one, ideally a 24-hour line, and agree the process with the district police before launch. The app always offers **Call 999** too.
+- **"Silent" audio.** No sounds or prompts play, but iPhone and Android always show their microphone indicator, which can't and shouldn't be hidden. Recording is reliable while SafeNest is on screen. Each 30-second chunk uploads as it finishes.
+- **Upload size.** Netlify functions accept about 6 MB per upload, so SOS videos are capped at 15 seconds in low quality. Photos and audio chunks are well under the limit.
+- **Privacy law.** Uganda's Data Protection and Privacy Act, 2019 applies, since you're storing locations, photos and audio. Register with the Personal Data Protection Office and add a privacy notice before launch.
+- **Costs.** Netlify Database and Functions use plan credits. Africa's Talking charges per SMS: each SOS sends one SMS per staff member without push, plus one to the police.
 
 ## Project map
-
 ```
-supabase/migrations/   schema · security rules + RPCs · storage
-supabase/functions/    send-sms-hook (OTP) · sos-dispatch (push + SMS)
-supabase/tests/        database flow tests (npm run test:db)
-apps/mobile/app/       (auth) login · resident/ · staff/ · pass/ · sos/[id]
-apps/web/app/          login · (dash)/ overview, estates, visitors, sos, admin/police · p/[token] public pass
-packages/shared/src/   types · theme colours · Uganda phone helpers
+netlify/database/migrations/   the whole schema, rules and functions (applied on deploy)
+netlify/database/tests/        database tests + test-only seed data
+apps/web/app/api/              the API: auth, estates, passes, gate, visitors, sos, evidence, admin
+apps/web/lib/server/           db transactions, sessions, OTP, SMS, SOS dispatch, evidence storage
+apps/web/app/(dash)/           dashboard pages · app/p/[token] public guest pass · app/login
+apps/mobile/app/               (auth) · resident/ · staff/ · pass/ · sos/[id]
+scripts/e2e.mjs                end-to-end API checks
 ```
 
-## Not in Phase 1 (planned)
-
-Subscription billing with MTN MoMo / Airtel Money (the `subscription_status` field and `ugNetwork()` helper are ready for it), automatic SMS of the pass to the guest, rate limiting on code guessing, offline gate mode for guards, and Luganda/Swahili translations.
+## Not in Phase 1
+Subscription billing with MTN MoMo / Airtel Money (the `subscription_status` field and `ugNetwork()` helper are ready), texting the pass to the guest automatically, offline gate mode for guards, and Luganda/Swahili translations.

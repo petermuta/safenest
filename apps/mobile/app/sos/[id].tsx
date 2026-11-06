@@ -1,4 +1,4 @@
-import { formatUgPhone, SOS_BUCKET, type SosAlert, type SosEvidence, type SosStatus } from '@safenest/shared';
+import { formatUgPhone, type SosAlert, type SosEvidence, type SosStatus } from '@safenest/shared';
 import {
   RecordingPresets,
   requestRecordingPermissionsAsync,
@@ -13,13 +13,15 @@ import { Badge, Body, Button, Card, Label, Screen } from '../../src/components/u
 import { useAuth } from '../../src/lib/auth';
 import { fmtClock } from '../../src/lib/format';
 import { uploadEvidence } from '../../src/lib/sos';
-import { errorMessage, supabase } from '../../src/lib/supabase';
+import { api, API_URL, errorMessage } from '../../src/lib/api';
+import { useFocusPoll } from '../../src/lib/poll';
 import { useTheme } from '../../src/lib/theme';
 
 type AlertRow = SosAlert & {
   resident: { full_name: string | null; phone: string } | null;
   unit: { label: string } | null;
   estate: { name: string } | null;
+  evidence: SosEvidence[];
 };
 
 const AUDIO_CHUNK_MS = 30_000;
@@ -27,38 +29,23 @@ const AUDIO_MAX_CHUNKS = 10; // 5 minutes
 
 export default function SosScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { session } = useAuth();
+  const { userId } = useAuth();
   const router = useRouter();
   const { c } = useTheme();
   const [alert, setAlert] = useState<AlertRow | null>(null);
-  const [evidence, setEvidence] = useState<SosEvidence[]>([]);
   const [uploading, setUploading] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
 
   const load = useCallback(async () => {
-    const [{ data: a }, { data: ev }] = await Promise.all([
-      supabase
-        .from('sos_alerts')
-        .select('*, resident:profiles!sos_alerts_user_id_fkey(full_name, phone), unit:units(label), estate:estates(name)')
-        .eq('id', id)
-        .single(),
-      supabase.from('sos_evidence').select('*').eq('alert_id', id).order('created_at'),
-    ]);
-    setAlert(a as AlertRow);
-    setEvidence((ev as SosEvidence[]) ?? []);
+    const a = await api<AlertRow>(`/api/sos/${id}`).catch(() => null);
+    if (a) setAlert(a);
   }, [id]);
 
-  useEffect(() => {
-    load();
-    const ch = supabase
-      .channel(`sos-${id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sos_alerts', filter: `id=eq.${id}` }, load)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sos_evidence', filter: `alert_id=eq.${id}` }, load)
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [id, load]);
+  // Status and evidence refresh every 5 seconds while this screen is open.
+  useFocusPoll(load, 5_000, [load]);
 
-  const mine = !!alert && alert.user_id === session?.user.id;
+  const evidence = alert?.evidence ?? [];
+  const mine = !!alert && alert.user_id === userId;
   const open = alert?.status === 'active' || alert?.status === 'acknowledged';
 
   // ---------------------------------------------------------- silent audio evidence
@@ -102,13 +89,16 @@ export default function SosScreen() {
     if (!perm.granted) return Alert.alert('Camera blocked', 'Allow camera access in Settings to add evidence.');
     const res = await ImagePicker.launchCameraAsync({
       mediaTypes: kind === 'photo' ? ['images'] : ['videos'],
-      quality: 0.6,
-      videoMaxDuration: 30,
+      quality: 0.5,
+      // Uploads go through a Netlify function (≈6 MB limit): short, low-quality clips fit.
+      videoMaxDuration: 15,
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType.Low,
     });
     if (res.canceled || !res.assets[0]) return;
     setUploading(kind);
     try {
       await uploadEvidence(id, kind, res.assets[0].uri, res.assets[0].mimeType);
+      load();
     } catch (e) {
       Alert.alert('Upload failed', errorMessage(e));
     } finally {
@@ -118,13 +108,21 @@ export default function SosScreen() {
 
   const setStatus = async (status: SosStatus) => {
     if (status === 'false_alarm' || status === 'resolved') stopFlag.current = true;
-    const { error } = await supabase.rpc('update_sos_status', { p_alert: id, p_status: status });
-    if (error) Alert.alert('Not updated', errorMessage(error));
+    try {
+      await api(`/api/sos/${id}/status`, { body: { status } });
+      load();
+    } catch (e) {
+      Alert.alert('Not updated', errorMessage(e));
+    }
   };
 
   const openEvidence = async (e: SosEvidence) => {
-    const { data } = await supabase.storage.from(SOS_BUCKET).createSignedUrl(e.storage_path, 600);
-    if (data?.signedUrl) Linking.openURL(data.signedUrl);
+    try {
+      const { url } = await api<{ url: string }>(`/api/evidence/${e.id}/link`, { method: 'POST' });
+      Linking.openURL(`${API_URL}${url}`);
+    } catch (err) {
+      Alert.alert('Could not open', errorMessage(err));
+    }
   };
 
   if (!alert) return <Screen><Body muted>Loading alert…</Body></Screen>;

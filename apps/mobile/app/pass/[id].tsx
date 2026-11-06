@@ -6,7 +6,7 @@ import QRCode from 'react-native-qrcode-svg';
 import { Badge, Body, Button, Card, Screen, Title } from '../../src/components/ui';
 import { useAuth } from '../../src/lib/auth';
 import { fmtTime, passTone } from '../../src/lib/format';
-import { errorMessage, supabase, WEB_URL } from '../../src/lib/supabase';
+import { api, errorMessage, WEB_URL } from '../../src/lib/api';
 import { useTheme } from '../../src/lib/theme';
 
 export default function PassDetail() {
@@ -17,8 +17,11 @@ export default function PassDetail() {
   const [pass, setPass] = useState<GuestPass | null>(null);
 
   const load = async () => {
-    const { data } = await supabase.from('guest_passes').select('*').eq('id', id).single();
-    setPass(data as GuestPass);
+    try {
+      setPass(await api<GuestPass>(`/api/passes/${id}`));
+    } catch (e) {
+      Alert.alert('Could not load pass', errorMessage(e));
+    }
   };
   useEffect(() => { load(); }, [id]);
 
@@ -42,9 +45,12 @@ export default function PassDetail() {
       {
         text: 'Cancel pass', style: 'destructive',
         onPress: async () => {
-          const { error } = await supabase.rpc('revoke_guest_pass', { p_pass: pass.id });
-          if (error) Alert.alert('Could not cancel', errorMessage(error));
-          else load();
+          try {
+            await api(`/api/passes/${pass.id}/revoke`, { method: 'POST' });
+            load();
+          } catch (e) {
+            Alert.alert('Could not cancel', errorMessage(e));
+          }
         },
       },
     ]);

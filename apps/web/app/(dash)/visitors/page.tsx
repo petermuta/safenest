@@ -1,10 +1,11 @@
 'use client';
 
 import type { VisitorLog } from '@safenest/shared';
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useEstate } from '@/components/estate-context';
 import { Badge, NoEstate, PageTitle } from '@/components/shell';
-import { createClient } from '@/lib/supabase/client';
+import { api } from '@/lib/api';
+import { usePoll } from '@/lib/use-poll';
 
 type Row = VisitorLog & { unit: { label: string } | null; guard: { full_name: string | null } | null };
 
@@ -12,34 +13,19 @@ const METHOD = { pass_qr: 'QR pass', pass_code: 'Code', walk_in: 'Walk-in' } as 
 const fmt = (iso: string) => new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 export default function VisitorsPage() {
-  const supabase = createClient();
-  const { current, estates } = useEstate();
+  const { current, estates, loaded } = useEstate();
   const [rows, setRows] = useState<Row[]>([]);
   const [days, setDays] = useState(1);
   const [q, setQ] = useState('');
 
-  const load = useCallback(async () => {
+  // Refreshes every 15 seconds so new gate entries appear without reloading.
+  usePoll(async () => {
     if (!current) return;
-    const since = new Date(Date.now() - days * 86400000).toISOString();
-    const { data } = await supabase
-      .from('visitor_logs')
-      .select('*, unit:units(label), guard:profiles!visitor_logs_guard_id_fkey(full_name)')
-      .eq('estate_id', current.estate.id)
-      .gte('entry_at', since)
-      .order('entry_at', { ascending: false })
-      .limit(500);
-    setRows((data as Row[]) ?? []);
-  }, [current, days, supabase]);
+    const data = await api<Row[]>(`/api/estates/${current.estate.id}/visitors?days=${days}`).catch(() => null);
+    if (data) setRows(data);
+  }, 15_000, [current?.estate.id, days]);
 
-  useEffect(() => {
-    load();
-    if (!current) return;
-    const ch = supabase.channel(`web-visitors-${current.estate.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'visitor_logs', filter: `estate_id=eq.${current.estate.id}` }, load)
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [load, current, supabase]);
-
+  if (!loaded) return null;
   if (!estates.length) return <NoEstate />;
 
   const s = q.toLowerCase();

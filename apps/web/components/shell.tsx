@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useState, type ReactNode } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { useState, type ReactNode } from 'react';
+import { api } from '@/lib/api';
+import { usePoll } from '@/lib/use-poll';
 import { useEstate } from './estate-context';
 
 const NAV = [
@@ -18,23 +19,13 @@ export function Shell({ name, children }: { name: string; children: ReactNode })
   const router = useRouter();
   const { estates, current, setCurrent, appRole } = useEstate();
   const [openAlerts, setOpenAlerts] = useState(0);
-  const supabase = createClient();
 
-  // Live count of open SOS alerts for the badge in the sidebar.
-  useEffect(() => {
+  // Open SOS count for the sidebar badge, refreshed every 10 seconds.
+  usePoll(async () => {
     if (!current) return;
-    const id = current.estate.id;
-    const count = async () => {
-      const { count: n } = await supabase.from('sos_alerts').select('id', { count: 'exact', head: true })
-        .eq('estate_id', id).in('status', ['active', 'acknowledged']);
-      setOpenAlerts(n ?? 0);
-    };
-    count();
-    const ch = supabase.channel(`nav-sos-${id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sos_alerts', filter: `estate_id=eq.${id}` }, count)
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [current, supabase]);
+    const o = await api<{ openSos: number }>(`/api/estates/${current.estate.id}/overview`).catch(() => null);
+    if (o) setOpenAlerts(o.openSos);
+  }, 10_000, [current?.estate.id]);
 
   const nav = appRole === 'super_admin' ? [...NAV, { href: '/admin/police', label: 'Police stations', icon: '✚' }] : NAV;
 
@@ -73,7 +64,7 @@ export function Shell({ name, children }: { name: string; children: ReactNode })
         </nav>
 
         <button className="btn btn-secondary mt-6 hidden w-full lg:flex"
-          onClick={async () => { await supabase.auth.signOut(); router.replace('/login'); router.refresh(); }}>
+          onClick={async () => { await api('/api/auth/logout', { method: 'POST' }).catch(() => {}); router.replace('/login'); router.refresh(); }}>
           Sign out
         </button>
       </aside>

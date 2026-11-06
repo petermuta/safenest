@@ -1,11 +1,11 @@
 import type { Unit, VisitorLog } from '@safenest/shared';
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, View } from 'react-native';
 import { Badge, Body, Button, Card, Chip, Empty, Input, Label, Screen, Title } from '../../src/components/ui';
 import { useAuth } from '../../src/lib/auth';
 import { fmtClock } from '../../src/lib/format';
-import { errorMessage, supabase } from '../../src/lib/supabase';
+import { api, errorMessage } from '../../src/lib/api';
+import { useFocusPoll } from '../../src/lib/poll';
 
 type Row = VisitorLog & { unit: { label: string } | null };
 
@@ -21,52 +21,51 @@ export default function VisitorLogScreen() {
 
   const estateId = active?.estate.id;
 
-  const load = useCallback(async () => {
+  const load = async () => {
     if (!estateId) return;
-    const since = new Date(Date.now() - 24 * 3600_000).toISOString();
-    const { data } = await supabase
-      .from('visitor_logs')
-      .select('*, unit:units(label)')
-      .eq('estate_id', estateId)
-      .gte('entry_at', since)
-      .order('entry_at', { ascending: false });
-    setRows((data as Row[]) ?? []);
-  }, [estateId]);
+    const data = await api<Row[]>(`/api/estates/${estateId}/visitors?days=1`).catch(() => null);
+    if (data) setRows(data);
+  };
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusPoll(load, 15_000, [estateId]);
 
   useEffect(() => {
     if (!estateId) return;
-    supabase.from('units').select('id, label').eq('estate_id', estateId).order('label').then(({ data }) => setUnits(data ?? []));
-    const ch = supabase
-      .channel(`visitors-${estateId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'visitor_logs', filter: `estate_id=eq.${estateId}` }, load)
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [estateId, load]);
+    api<{ units: Pick<Unit, 'id' | 'label'>[] }>(`/api/estates/${estateId}`)
+      .then((d) => setUnits(d.units))
+      .catch(() => {});
+  }, [estateId]);
 
   const logWalkIn = async () => {
     if (!estateId || !form.name.trim()) return Alert.alert('Name needed', "Enter the visitor's name.");
     setBusy(true);
-    const { error } = await supabase.rpc('log_walk_in', {
-      p_estate: estateId,
-      p_guest_name: form.name,
-      p_unit: form.unit || null,
-      p_guest_phone: form.phone || null,
-      p_vehicle_plate: form.plate || null,
-      p_notes: form.notes || null,
-    });
-    setBusy(false);
-    if (error) return Alert.alert('Not logged', errorMessage(error));
-    setForm({ name: '', phone: '', plate: '', unit: '', notes: '' });
-    setShowForm(false);
-    load();
+    try {
+      await api(`/api/estates/${estateId}/visitors`, {
+        body: {
+          guest_name: form.name,
+          unit_id: form.unit || null,
+          guest_phone: form.phone || null,
+          vehicle_plate: form.plate || null,
+          notes: form.notes || null,
+        },
+      });
+      setForm({ name: '', phone: '', plate: '', unit: '', notes: '' });
+      setShowForm(false);
+      load();
+    } catch (e) {
+      Alert.alert('Not logged', errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const exit = async (id: string) => {
-    const { error } = await supabase.rpc('mark_exit', { p_log: id });
-    if (error) Alert.alert('Not updated', errorMessage(error));
-    else load();
+    try {
+      await api(`/api/visitors/${id}/exit`, { method: 'POST' });
+      load();
+    } catch (e) {
+      Alert.alert('Not updated', errorMessage(e));
+    }
   };
 
   const inside = rows.filter((r) => !r.exit_at).length;

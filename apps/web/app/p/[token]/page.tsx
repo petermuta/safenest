@@ -1,6 +1,6 @@
 import { qrPayload } from '@safenest/shared';
 import QRCode from 'qrcode';
-import { createClient } from '@/lib/supabase/server';
+import { asSystem } from '@/lib/server/db';
 
 // Public page a resident shares with their guest. The guest shows it at the gate.
 export const dynamic = 'force-dynamic';
@@ -22,9 +22,9 @@ const fmt = (iso: string) =>
 export default async function PublicPassPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const valid = /^[0-9a-f-]{36}$/i.test(token);
-  const supabase = await createClient();
-  const { data } = valid ? await supabase.rpc('get_public_pass', { p_token: token }) : { data: null };
-  const pass = data as PublicPass | null;
+  const pass = valid
+    ? ((await asSystem((tx) => tx.one(`select get_public_pass($1::uuid) as p`, [token])))?.p as PublicPass | null)
+    : null;
 
   if (!pass) {
     return (

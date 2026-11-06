@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Alert } from 'react-native';
 import { Body, Button, Card, Input, Label, Screen, Title } from '../../src/components/ui';
 import { useAuth } from '../../src/lib/auth';
-import { errorMessage, supabase } from '../../src/lib/supabase';
+import { api, errorMessage } from '../../src/lib/api';
 
 export default function Profile() {
   const { profile, active, memberships, refresh, signOut } = useAuth();
@@ -13,11 +13,15 @@ export default function Profile() {
   const save = async () => {
     if (!profile) return;
     setBusy(true);
-    const { error } = await supabase.from('profiles').update({ full_name: name.trim() || null }).eq('id', profile.id);
-    setBusy(false);
-    if (error) return Alert.alert('Not saved', errorMessage(error));
-    await refresh();
-    Alert.alert('Saved', 'Your name has been updated.');
+    try {
+      await api('/api/me', { method: 'PATCH', body: { full_name: name.trim() || null } });
+      await refresh();
+      Alert.alert('Saved', 'Your name has been updated.');
+    } catch (e) {
+      Alert.alert('Not saved', errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (

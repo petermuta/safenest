@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, Text, View } from 'react-native';
 import { Body, Button, Card, Input, Screen } from '../../src/components/ui';
-import { errorMessage, supabase } from '../../src/lib/supabase';
+import { api, errorMessage } from '../../src/lib/api';
 import { useTheme } from '../../src/lib/theme';
 
 export default function Login() {
@@ -19,10 +19,14 @@ export default function Login() {
     if (!phone) return setErr('Enter a Ugandan mobile number, e.g. 0772 123 456');
     setErr(null);
     setBusy(true);
-    const { error } = await supabase.auth.signInWithOtp({ phone });
-    setBusy(false);
-    if (error) return setErr(errorMessage(error));
-    router.push({ pathname: '/verify', params: { phone } });
+    try {
+      await api('/api/auth/otp', { body: { phone } });
+      router.push({ pathname: '/verify', params: { phone } });
+    } catch (e) {
+      setErr(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (

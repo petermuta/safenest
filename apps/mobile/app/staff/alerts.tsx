@@ -1,12 +1,13 @@
 import type { SosAlert } from '@safenest/shared';
 import * as Haptics from 'expo-haptics';
-import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'expo-router';
+import { useRef, useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { Badge, Body, Button, Card, Empty, Screen, Title } from '../../src/components/ui';
 import { useAuth } from '../../src/lib/auth';
 import { fmtTime } from '../../src/lib/format';
-import { supabase } from '../../src/lib/supabase';
+import { api } from '../../src/lib/api';
+import { useFocusPoll } from '../../src/lib/poll';
 
 type Row = SosAlert & {
   resident: { full_name: string | null } | null;
@@ -19,31 +20,19 @@ export default function Alerts() {
   const [rows, setRows] = useState<Row[]>([]);
   const estateId = active?.estate.id;
 
-  const load = useCallback(async () => {
-    if (!estateId) return;
-    const { data } = await supabase
-      .from('sos_alerts')
-      .select('*, resident:profiles!sos_alerts_user_id_fkey(full_name), unit:units(label)')
-      .eq('estate_id', estateId)
-      .order('created_at', { ascending: false })
-      .limit(30);
-    setRows((data as Row[]) ?? []);
-  }, [estateId]);
+  const seen = useRef<Set<string> | null>(null);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
-
-  useEffect(() => {
+  // Checks every 5 seconds; buzzes when a new alert appears (push handles the app-closed case).
+  useFocusPoll(async () => {
     if (!estateId) return;
-    const ch = supabase
-      .channel(`alerts-${estateId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sos_alerts', filter: `estate_id=eq.${estateId}` }, () => {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        load();
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'sos_alerts', filter: `estate_id=eq.${estateId}` }, load)
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [estateId, load]);
+    const data = await api<Row[]>(`/api/estates/${estateId}/sos`).catch(() => null);
+    if (!data) return;
+    if (seen.current && data.some((r) => r.status === 'active' && !seen.current!.has(r.id))) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    }
+    seen.current = new Set(data.map((r) => r.id));
+    setRows(data);
+  }, 5_000, [estateId]);
 
   const open = rows.filter((r) => r.status === 'active' || r.status === 'acknowledged');
   const closed = rows.filter((r) => !open.includes(r));
