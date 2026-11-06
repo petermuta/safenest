@@ -36,7 +36,13 @@ export function handle<A extends unknown[]>(fn: (...args: A) => Promise<Response
       if (e?.code === '23505') return NextResponse.json({ error: 'That already exists' }, { status: 409 });
       if (e?.code === '23514' || e?.code === '22P02') return NextResponse.json({ error: 'Some details are not valid' }, { status: 400 });
       console.error('API error', e);
-      return NextResponse.json({ error: 'Something went wrong. Please try again.' }, { status: 500 });
+      // A short reference (database error code or error type, never data or secrets)
+      // so problems can be diagnosed from a screenshot.
+      const ref = [e?.code, e?.name !== 'Error' ? e?.name : null].filter(Boolean).join('/') || 'unknown';
+      const hint = /does not exist/i.test(String(e?.message)) ? ' [tables missing]'
+        : /not configured|connection|ECONN|ENOTFOUND|password authentication/i.test(String(e?.message)) ? ' [database connection]'
+        : '';
+      return NextResponse.json({ error: `Something went wrong (ref ${ref}${hint}). Please try again.` }, { status: 500 });
     }
   };
 }
