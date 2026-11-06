@@ -1,0 +1,22 @@
+# Copy of apps/web/netlify.toml — used if Netlify reads config from the repo root.
+#
+# In Netlify > Project configuration > Build & deploy > Build settings:
+#   Base directory:    (leave empty — the repo root)
+#   Package directory: apps/web
+#
+# Paths below are relative to the base directory (the repo root).
+
+[build]
+  command = "npm run build --workspace @safenest/web"
+  publish = "apps/web/.next"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# Secrets (SESSION_SECRET, AT_API_KEY, …) live in
+# Netlify > Project configuration > Environment variables — never here.
+
+# Run the app with Netlify's Next.js runtime (pages + API as functions).
+# Named explicitly because auto-detection can miss Next.js in a monorepo.
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
