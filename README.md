@@ -6,7 +6,7 @@ Estate security and management for Uganda, running entirely on **Netlify**.
 |---|---|---|
 | `apps/web` | Web dashboard for estate managers and the super admin, **plus the API** both apps use | Next.js 16, Tailwind 4 |
 | `apps/mobile` | App for residents (SOS, guest passes) and guards/managers (gate check, visitor log, alerts) | React Native, Expo SDK 58 |
-| `netlify/database` | Database migration and tests | Netlify Database (Postgres) |
+| `apps/web/netlify/database` | Database migration and tests | Netlify Database (Postgres) |
 | `packages/shared` | Types, colours, Uganda phone helpers | TypeScript |
 
 **What's built:** phone-number login (SMS code via Africa's Talking), role-based access (super admin, estate manager, guard, resident), estates/units/resident registration, one-time guest passes (6-digit code + QR + shareable link) with guard verification and a visitor log, and SOS (GPS + unit → guards, manager and nearest police station by push with SMS fallback, plus photo, video and silent audio evidence).
@@ -22,7 +22,7 @@ Estate security and management for Uganda, running entirely on **Netlify**.
 ## How it works
 
 - **One Netlify site does everything.** The web dashboard and the API live in the same Next.js app; Netlify turns the API routes into server functions. The mobile app talks to the same site.
-- **Database.** Netlify Database (Postgres). The migration in `netlify/database/migrations` is applied **automatically on every deploy**, so you never touch the database directly.
+- **Database.** Netlify Database (Postgres). The migration in `apps/web/netlify/database/migrations` is applied **automatically on every deploy**, so you never touch the database directly.
 - **Login.** The API texts a 6-digit code through Africa's Talking. Only a hash of the code is stored, it expires in 10 minutes, and there's a limit of 3 codes per 10 minutes and 5 tries per code. Sessions last 30 days: an httpOnly cookie on the web, and secure phone storage in the app.
 - **Who can do what.** Every request runs inside a database transaction tagged with the signed-in user. The rules ("only this estate's guards can verify a pass", "residents only see their unit"…) live in database functions, so neither app can bypass them.
 - **Evidence.** Photos, videos and audio go into a private Netlify Blobs store. They're only served after the database confirms the viewer is the resident who raised the alert or that estate's staff. The app opens files through 10-minute links.
@@ -107,8 +107,8 @@ Tests: `npm run test:db` needs nothing else. `npm run test:e2e -- http://localho
 
 ## Project map
 ```
-netlify/database/migrations/   the whole schema, rules and functions (applied on deploy)
-netlify/database/tests/        database tests + test-only seed data
+apps/web/netlify/database/migrations/   the whole schema, rules and functions (applied on deploy)
+apps/web/netlify/database/tests/        database tests + test-only seed data
 apps/web/app/api/              the API: auth, estates, passes, gate, visitors, sos, evidence, admin
 apps/web/lib/server/           db transactions, sessions, OTP, SMS, SOS dispatch, evidence storage
 apps/web/app/(dash)/           dashboard pages · app/p/[token] public guest pass · app/login

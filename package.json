@@ -12,7 +12,7 @@
     "mobile": "npm run start --workspace @safenest/mobile",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "build": "npm run build --workspace @safenest/web",
-    "test:db": "node netlify/database/tests/flows.test.mjs",
+    "test:db": "node apps/web/netlify/database/tests/flows.test.mjs",
     "test:e2e": "node scripts/e2e.mjs"
   },
   "engines": {
