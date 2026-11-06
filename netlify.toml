@@ -1,0 +1,11 @@
+# Netlify builds the SafeNest web dashboard (apps/web) from the monorepo root,
+# so npm workspaces install the shared package too.
+[build]
+  command = "npm run build --workspace @safenest/web"
+  publish = "apps/web/.next"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in
+# Netlify > Site configuration > Environment variables (not here).
