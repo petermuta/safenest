@@ -10,9 +10,10 @@ let pool: Pool | null = null;
 /** Netlify injects the connection; DATABASE_URL overrides it for local runs and tests. */
 function getPool(): Pool {
   if (!pool) {
-    const db = process.env.DATABASE_URL
-      ? getDatabase({ connectionString: process.env.DATABASE_URL })
-      : getDatabase();
+    // DATABASE_URL: local runs/tests. NETLIFY_DB_URL: passed explicitly because some
+    // framework functions can't auto-detect the connection ("Environment not configured").
+    const url = process.env.DATABASE_URL ?? process.env.NETLIFY_DB_URL;
+    const db = url ? getDatabase({ connectionString: url }) : getDatabase();
     pool = db.pool as unknown as Pool;
   }
   return pool;
