@@ -19,6 +19,41 @@ function getPool(): Pool {
   return pool;
 }
 
+let schemaReady: Promise<void> | null = null;
+
+/**
+ * Makes sure the tables exist. Normally Netlify applies netlify/database/migrations on
+ * deploy; if it hasn't, the server applies the same (idempotent) SQL once, under an
+ * advisory lock so concurrent instances don't race. Cheap check after the first time.
+ */
+function ensureSchema(): Promise<void> {
+  if (!schemaReady) {
+    schemaReady = (async () => {
+      const client = await getPool().connect();
+      try {
+        const ready = (await client.query(`select to_regclass('public.sos_evidence') is not null as ok`)).rows[0]?.ok;
+        if (ready) return;
+        const { MIGRATIONS } = await import('./schema.generated');
+        await client.query('begin');
+        await client.query('select pg_advisory_xact_lock(724501)');
+        const again = (await client.query(`select to_regclass('public.sos_evidence') is not null as ok`)).rows[0]?.ok;
+        if (!again) {
+          for (const m of MIGRATIONS) await client.query(m.sql);
+          console.log(`SafeNest: created database tables (${MIGRATIONS.map((m) => m.name).join(', ')})`);
+        }
+        await client.query('commit');
+      } catch (e) {
+        await client.query('rollback').catch(() => {});
+        schemaReady = null; // try again on the next request
+        throw e;
+      } finally {
+        client.release();
+      }
+    })();
+  }
+  return schemaReady;
+}
+
 export interface Tx {
   /** Run a query and return all rows. */
   all<T = any>(text: string, params?: unknown[]): Promise<T[]>;
@@ -35,6 +70,7 @@ type AccessFn = 'is_estate_member' | 'is_estate_staff' | 'is_estate_manager' | '
  * auth.uid(), so every SQL rule (who may verify a pass, raise SOS…) applies.
  */
 export async function asUser<T>(userId: string | null, fn: (tx: Tx) => Promise<T>): Promise<T> {
+  await ensureSchema();
   const client = await getPool().connect();
   const tx: Tx = {
     all: async (text, params) => (await client.query(text, params)).rows,

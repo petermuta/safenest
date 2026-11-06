@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/embed-schema.mjs && next dev",
+    "prebuild": "node scripts/embed-schema.mjs",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "node scripts/embed-schema.mjs && tsc --noEmit"
   },
   "dependencies": {
     "@netlify/blobs": "^11.1.8",
