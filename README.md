@@ -85,6 +85,34 @@ For the App Store: `npx eas build --platform all --profile production`, then `np
 
 ---
 
+---
+
+## Run the mobile app on an iPhone from Windows
+
+**Quick test with Expo Go (free; everything except push notifications)**
+1. Install **Node.js 22 LTS** (nodejs.org) and **Git** (git-scm.com). On the iPhone, install **Expo Go** from the App Store.
+2. In PowerShell:
+   ```powershell
+   git clone https://github.com/petermuta/safenest
+   cd safenest
+   npm install
+   cd apps\mobile
+   Set-Content .env "EXPO_PUBLIC_API_URL=https://peter-safenest.netlify.app"
+   npx expo start --tunnel
+   ```
+3. Scan the QR code with the iPhone camera. It opens in Expo Go.
+
+**Full app with push notifications (Expo cloud build; needs an Apple Developer account, $99/year)**
+```powershell
+npm install -g eas-cli
+cd apps\mobile
+eas login
+eas init                                   # links the project and sets the push project id
+eas device:create                          # register your iPhone (open the link on the phone)
+eas build --profile development --platform ios
+```
+Install the build from the link Expo sends, then run `npx expo start --tunnel` and open it in the SafeNest app.
+
 ## Run locally (optional, needs a computer)
 ```bash
 npm install
