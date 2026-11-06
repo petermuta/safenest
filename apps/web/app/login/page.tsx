@@ -67,8 +67,12 @@ export default function LoginPage() {
           ) : (
             <form onSubmit={verify} className="space-y-4">
               <p className="text-sm text-muted">Code sent to <b className="text-ink">{formatUgPhone(phone)}</b></p>
-              <input className="input text-center text-2xl tracking-[0.5em]" inputMode="numeric" autoComplete="one-time-code"
-                maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} autoFocus />
+              <div>
+                <label className="label" htmlFor="code">Enter the 6-digit code</label>
+                <input id="code" className="input border-2 border-brand text-center text-2xl tracking-[0.5em]" inputMode="numeric"
+                  autoComplete="one-time-code" placeholder="••••••" maxLength={6} value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} autoFocus />
+              </div>
               {err && <p className="text-sm text-sos">{err}</p>}
               <button className="btn btn-primary w-full" disabled={busy || code.length !== 6}>{busy ? 'Checking…' : 'Sign in'}</button>
               <button type="button" className="btn btn-secondary w-full" onClick={() => { setPhone(null); setCode(''); }}>
