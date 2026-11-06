@@ -1,0 +1,26 @@
+{
+  "name": "safenest",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SafeNest \u2014 estate security and management for Uganda",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "web": "npm run dev --workspace @safenest/web",
+    "mobile": "npm run start --workspace @safenest/mobile",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "db:start": "supabase start",
+    "db:reset": "supabase db reset",
+    "db:push": "supabase db push",
+    "functions:deploy": "supabase functions deploy send-sms-hook --no-verify-jwt && supabase functions deploy sos-dispatch",
+    "test:db": "node supabase/tests/flows.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15"
+  }
+}

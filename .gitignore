@@ -1,0 +1,15 @@
+node_modules/
+.env
+.env.local
+.env*.local
+.next/
+.expo/
+dist/
+build/
+ios/
+android/
+*.tsbuildinfo
+.DS_Store
+supabase/.branches
+supabase/.temp
+next-env.d.ts
