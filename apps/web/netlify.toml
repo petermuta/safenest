@@ -1,0 +1,17 @@
+# Netlify config for the SafeNest web dashboard + API (monorepo).
+#
+# In Netlify > Project configuration > Build & deploy > Build settings:
+#   Base directory:    (leave empty — the repo root)
+#   Package directory: apps/web
+#
+# Paths below are relative to the base directory (the repo root).
+
+[build]
+  command = "npm run build --workspace @safenest/web"
+  publish = "apps/web/.next"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# Secrets (SESSION_SECRET, AT_API_KEY, …) live in
+# Netlify > Project configuration > Environment variables — never here.

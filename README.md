@@ -42,7 +42,7 @@ git push -u origin main
 
 ### 2. Import it into Netlify
 In Netlify: **Add new project → Import an existing project → GitHub → safenest**.
-- **Base directory:** leave blank. If Netlify asks for a package or app to deploy, choose `apps/web`.
+- **Base directory:** leave blank. **Package directory:** `apps/web` (Build settings → Configure). Without it the site shows "Page not found".
 - **Build command / publish:** already set in `netlify.toml`, so leave the defaults.
 
 ### 3. Turn on the database
