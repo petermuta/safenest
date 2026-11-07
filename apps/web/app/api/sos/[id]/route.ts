@@ -14,7 +14,7 @@ export const GET = handle(async (req: Request, { params }: { params: Promise<{ i
               jsonb_build_object('name', e.name) as estate,
               coalesce((select jsonb_agg(ev order by ev.created_at) from sos_evidence ev where ev.alert_id = a.id), '[]') as evidence
          from sos_alerts a
-         join profiles p on p.id = a.user_id
+         left join profiles p on p.id = a.user_id
          join estates e on e.id = a.estate_id
          left join units u on u.id = a.unit_id
         where a.id = $1 and (a.user_id = auth.uid() or public.is_estate_staff(a.estate_id))`,

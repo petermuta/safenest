@@ -27,6 +27,20 @@ export default function NewCommunityAlert() {
   const post = async () => {
     if (!active) return;
     if (message.trim().length < 3) return Alert.alert('Add a description', 'Say briefly what is happening.');
+    // A photo of a "suspicious" person can lead to an innocent person being harmed.
+    if (photo && (category === 'suspicious_person' || category === 'suspicious_vehicle')) {
+      const go = await new Promise<boolean>((resolve) =>
+        Alert.alert(
+          'Before you share this photo',
+          'Being seen nearby is not a crime. Never name anyone, and don\'t share a photo that could lead to someone being confronted or harmed. If a crime is happening, use Send to police instead.',
+          [
+            { text: 'Go back', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Post it', onPress: () => resolve(true) },
+          ],
+        ),
+      );
+      if (!go) return;
+    }
     setBusy(true);
     try {
       const fix = await getFix(active);
@@ -62,7 +76,10 @@ export default function NewCommunityAlert() {
           placeholder="e.g. Two men checking car doors on Lane 3" style={{ minHeight: 90, textAlignVertical: 'top' }} />
         {photo ? <Image source={{ uri: photo.uri }} style={{ width: '100%', height: 180, borderRadius: 14, marginBottom: 12 }} /> : null}
         <Button variant="secondary" title={photo ? 'Retake photo' : 'Add a photo (only if safe)'} onPress={takePhoto} style={{ marginBottom: 12 }} />
-        <Body muted style={{ marginBottom: 12 }}>Your current location is attached. Don't put yourself at risk to take a photo.</Body>
+        <Body muted style={{ marginBottom: 12 }}>
+          Neighbours see roughly where this is (within about 150 m), not your exact location, and never your name.
+          Describe what you saw, not who you think someone is. Don't put yourself at risk to take a photo.
+        </Body>
         <Button title="Post alert" onPress={post} loading={busy} />
       </Card>
       <Button variant="ghost" title="Cancel" onPress={() => router.back()} />

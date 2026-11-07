@@ -12,6 +12,10 @@ export default function LoginPage() {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Second step for police, managers and the super admin
+  const [pinStep, setPinStep] = useState<{ mode: 'setup' | 'enter'; pending: string } | null>(null);
+  const [pin, setPin] = useState('');
+  const [pin2, setPin2] = useState('');
 
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,11 +39,34 @@ export default function LoginPage() {
     setBusy(true);
     setErr(null);
     try {
-      await api('/api/auth/verify', { body: { phone, code } });
+      const r = await api<{ token?: string; pin?: 'setup' | 'enter'; pending?: string }>('/api/auth/verify', { body: { phone, code } });
+      if (r.pin && r.pending) {
+        setPinStep({ mode: r.pin, pending: r.pending });
+        setBusy(false);
+        return;
+      }
       router.replace('/');
       router.refresh();
     } catch (e) {
       setErr(errorMessage(e));
+      setBusy(false);
+    }
+  };
+
+  const submitPin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pinStep) return;
+    if (pinStep.mode === 'setup' && pin !== pin2) return setErr('The two PINs do not match');
+    setBusy(true);
+    setErr(null);
+    try {
+      await api('/api/auth/pin', { body: { pending: pinStep.pending, pin } });
+      router.replace('/');
+      router.refresh();
+    } catch (e) {
+      setErr(errorMessage(e));
+      setPin('');
+      setPin2('');
       setBusy(false);
     }
   };
@@ -54,7 +81,35 @@ export default function LoginPage() {
         </div>
 
         <div className="card p-6">
-          {!phone ? (
+          {pinStep ? (
+            <form onSubmit={submitPin} className="space-y-4">
+              {pinStep.mode === 'setup' ? (
+                <p className="text-sm text-muted">
+                  Your account can see sensitive information, so it needs a PIN as well as the SMS code. Choose 4–6 digits
+                  you don&apos;t use anywhere else. Never share it.
+                </p>
+              ) : (
+                <p className="text-sm text-muted">Enter your SafeNest PIN to finish signing in.</p>
+              )}
+              <div>
+                <label className="label" htmlFor="pin">{pinStep.mode === 'setup' ? 'New PIN' : 'PIN'}</label>
+                <input id="pin" type="password" className="input border-2 border-brand text-center text-2xl tracking-[0.5em]"
+                  inputMode="numeric" autoComplete={pinStep.mode === 'setup' ? 'new-password' : 'current-password'}
+                  maxLength={6} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} autoFocus />
+              </div>
+              {pinStep.mode === 'setup' && (
+                <div>
+                  <label className="label" htmlFor="pin2">Type it again</label>
+                  <input id="pin2" type="password" className="input text-center text-2xl tracking-[0.5em]" inputMode="numeric"
+                    autoComplete="new-password" maxLength={6} value={pin2} onChange={(e) => setPin2(e.target.value.replace(/\D/g, ''))} />
+                </div>
+              )}
+              {err && <p className="text-sm text-sos">{err}</p>}
+              <button className="btn btn-primary w-full" disabled={busy || pin.length < 4}>
+                {busy ? 'Checking…' : pinStep.mode === 'setup' ? 'Save PIN and sign in' : 'Sign in'}
+              </button>
+            </form>
+          ) : !phone ? (
             <form onSubmit={send} className="space-y-4">
               <div>
                 <label className="label" htmlFor="phone">Phone number</label>

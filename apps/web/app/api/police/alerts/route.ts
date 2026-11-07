@@ -14,7 +14,7 @@ export const GET = handle(async (req: Request) => {
               p.full_name as resident_name, e.name as estate_name, u.label as unit_label,
               s.name as post_name, o.full_name as assigned_officer
          from sos_alerts a
-         join profiles p on p.id = a.user_id
+         left join profiles p on p.id = a.user_id
          join estates e on e.id = a.estate_id
          left join units u on u.id = a.unit_id
          left join police_stations s on s.id = a.police_station_id

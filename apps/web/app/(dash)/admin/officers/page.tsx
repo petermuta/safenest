@@ -20,6 +20,8 @@ export default function OfficersPage() {
   const [units, setUnits] = useState<Unit[]>([]);
   const [form, setForm] = useState(blank);
   const [err, setErr] = useState<string | null>(null);
+  const [resetPhone, setResetPhone] = useState('');
+  const [resetMsg, setResetMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [o, u] = await Promise.all([api<Officer[]>('/api/admin/officers').catch(() => null), api<Unit[]>('/api/admin/police').catch(() => null)]);
@@ -42,6 +44,18 @@ export default function OfficersPage() {
       load();
     } catch (x) {
       setErr(errorMessage(x));
+    }
+  };
+
+  const resetPin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!confirm('Only reset a PIN after confirming who is asking (in person, or by calling their known number). Continue?')) return;
+    try {
+      await api('/api/admin/reset-pin', { body: { phone: resetPhone } });
+      setResetMsg('PIN cleared. They will choose a new one at their next sign-in.');
+      setResetPhone('');
+    } catch (x) {
+      setResetMsg(errorMessage(x));
     }
   };
 
@@ -106,6 +120,15 @@ export default function OfficersPage() {
         ))}
         {!rows.length && <p className="p-4 text-muted">No officers yet. Add police units first, then their officers.</p>}
       </div>
+
+      <form onSubmit={resetPin} className="card mt-6 flex flex-wrap items-end gap-3 p-5">
+        <div className="min-w-56 flex-1">
+          <label className="label">Reset a forgotten PIN (officers, managers)</label>
+          <input className="input" placeholder="0772 123 456" value={resetPhone} onChange={(e) => setResetPhone(e.target.value)} />
+        </div>
+        <button className="btn btn-secondary" disabled={!resetPhone}>Reset PIN</button>
+        {resetMsg && <p className="w-full text-sm text-muted">{resetMsg}</p>}
+      </form>
     </>
   );
 }

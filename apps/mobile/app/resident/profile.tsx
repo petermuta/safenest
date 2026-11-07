@@ -4,6 +4,7 @@ import { Alert } from 'react-native';
 import { Body, Button, Card, Input, Label, Screen, Title } from '../../src/components/ui';
 import { useAuth } from '../../src/lib/auth';
 import { api, errorMessage } from '../../src/lib/api';
+import { confirmDeleteAccount } from '../../src/lib/delete-account';
 
 export default function Profile() {
   const { profile, active, memberships, refresh, signOut } = useAuth();
@@ -42,6 +43,14 @@ export default function Profile() {
         ))}
       </Card>
       <Button variant="secondary" title="Sign out" onPress={signOut} />
+      <Card style={{ marginTop: 24 }}>
+        <Label>Privacy</Label>
+        <Body style={{ marginBottom: 12 }}>
+          Your NIN is encrypted and only police can see it in full; every look is recorded. Your exact location is
+          shared only when you press SOS. Neighbours see your community posts without your name.
+        </Body>
+        <Button variant="danger" title="Delete my account" onPress={() => confirmDeleteAccount(signOut)} />
+      </Card>
     </Screen>
   );
 }

@@ -10,7 +10,10 @@ export default function Verify() {
   const { phone } = useLocalSearchParams<{ phone: string }>();
   const router = useRouter();
   const { c } = useTheme();
-  const { signIn } = useAuth();
+  const { signIn, completePin } = useAuth();
+  const [pinStep, setPinStep] = useState<{ mode: 'setup' | 'enter'; pending: string } | null>(null);
+  const [pin, setPin] = useState('');
+  const [pin2, setPin2] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -26,13 +29,58 @@ export default function Verify() {
     setBusy(true);
     setErr(null);
     try {
-      await signIn(phone, token);
-      // The root layout now routes to the right home screen.
+      const step = await signIn(phone, token);
+      if (step) {
+        setPinStep(step);
+        setBusy(false);
+      }
+      // Otherwise the root layout now routes to the right home screen.
     } catch (e) {
       setErr(errorMessage(e));
       setBusy(false);
     }
   };
+
+  const submitPin = async () => {
+    if (!pinStep) return;
+    if (pinStep.mode === 'setup' && pin !== pin2) return setErr('The two PINs do not match');
+    setBusy(true);
+    setErr(null);
+    try {
+      await completePin(pinStep.pending, pin);
+    } catch (e) {
+      setErr(errorMessage(e));
+      setPin('');
+      setPin2('');
+      setBusy(false);
+    }
+  };
+
+  if (pinStep) {
+    const pinStyle = { fontSize: 28, letterSpacing: 10, textAlign: 'center' as const };
+    return (
+      <Screen>
+        <Title sub={pinStep.mode === 'setup' ? 'Your account can see sensitive information' : 'Second step'}>
+          {pinStep.mode === 'setup' ? 'Choose a PIN' : 'Enter your PIN'}
+        </Title>
+        <Card>
+          {pinStep.mode === 'setup' ? (
+            <Body muted style={{ marginBottom: 12 }}>
+              Choose 4–6 digits you don't use anywhere else. You'll enter it each time you sign in. Never share it.
+            </Body>
+          ) : null}
+          <Input label={pinStep.mode === 'setup' ? 'New PIN' : 'PIN'} value={pin} onChangeText={(v) => setPin(v.replace(/\D/g, ''))}
+            keyboardType="number-pad" secureTextEntry maxLength={6} style={pinStyle} autoFocus />
+          {pinStep.mode === 'setup' ? (
+            <Input label="Type it again" value={pin2} onChangeText={(v) => setPin2(v.replace(/\D/g, ''))}
+              keyboardType="number-pad" secureTextEntry maxLength={6} style={pinStyle} />
+          ) : null}
+          {err ? <Body style={{ color: c.sos, marginBottom: 12 }}>{err}</Body> : null}
+          <Button title={pinStep.mode === 'setup' ? 'Save PIN and sign in' : 'Sign in'} onPress={submitPin} loading={busy} disabled={pin.length < 4} />
+        </Card>
+      </Screen>
+    );
+  }
 
   const resend = async () => {
     setWait(60);

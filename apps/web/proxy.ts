@@ -11,7 +11,7 @@ export async function proxy(request: NextRequest) {
   let signedIn = false;
   if (token && process.env.SESSION_SECRET) {
     try {
-      await jwtVerify(token, new TextEncoder().encode(process.env.SESSION_SECRET), { audience: 'session' });
+      await jwtVerify(token, new TextEncoder().encode(process.env.SESSION_SECRET), { audience: 'session-v2' });
       signedIn = true;
     } catch {}
   }

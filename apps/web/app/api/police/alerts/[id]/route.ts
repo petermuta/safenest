@@ -19,12 +19,12 @@ export const GET = handle(async (req: Request, { params }: { params: Promise<{ i
               case when s.id is null then null else jsonb_build_object('id', s.id, 'name', s.name, 'phone', s.phone) end as post,
               case when reg.id is null then null else jsonb_build_object('id', reg.id, 'name', reg.name) end as regional,
               case when o.id is null then null else jsonb_build_object('id', o.id, 'full_name', o.full_name, 'phone', o.phone) end as assigned_officer,
-              coalesce((select jsonb_agg(jsonb_build_object('id', ev.id, 'kind', ev.kind, 'created_at', ev.created_at) order by ev.created_at)
+              coalesce((select jsonb_agg(jsonb_build_object('id', ev.id, 'kind', ev.kind, 'created_at', ev.created_at, 'sha256', ev.sha256) order by ev.created_at)
                           from sos_evidence ev where ev.alert_id = a.id), '[]') as evidence,
               (select jsonb_build_object('category', c.category, 'message', c.message, 'has_photo', c.photo_path is not null)
                  from community_alerts c where c.sos_alert_id = a.id limit 1) as community
          from sos_alerts a
-         join profiles p on p.id = a.user_id
+         left join profiles p on p.id = a.user_id
          join estates e on e.id = a.estate_id
          left join units u on u.id = a.unit_id
          left join resident_identity ri on ri.user_id = a.user_id

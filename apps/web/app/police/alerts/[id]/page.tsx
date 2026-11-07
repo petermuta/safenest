@@ -30,6 +30,17 @@ export default function PoliceCase() {
   const [here, setHere] = useState<{ lat: number; lng: number; acc: number } | null>(null);
   const [geoErr, setGeoErr] = useState<string | null>(null);
   const [nin, setNin] = useState<string | null>(null);
+  const [checks, setChecks] = useState<Record<string, string>>({});
+
+  const verify = async (evId: string) => {
+    setChecks((c) => ({ ...c, [evId]: 'checking' }));
+    try {
+      const r = await api<{ status: string }>(`/api/evidence/${evId}/verify`, { method: 'POST' });
+      setChecks((c) => ({ ...c, [evId]: r.status }));
+    } catch (e) {
+      setChecks((c) => ({ ...c, [evId]: errorMessage(e) }));
+    }
+  };
 
   const load = async () => {
     try {
@@ -135,8 +146,8 @@ export default function PoliceCase() {
         )}
         <div className="min-w-0 flex-1">
           <div className="label">Resident</div>
-          <div className="text-lg font-bold">{a.resident.full_name ?? 'Name not given'}</div>
-          <a className="font-semibold text-brand-deep underline" href={`tel:${a.resident.phone}`}>{formatUgPhone(a.resident.phone)}</a>
+          <div className="text-lg font-bold">{a.resident.id ? a.resident.full_name ?? 'Name not given' : 'Account deleted by resident'}</div>
+          {a.resident.phone && <a className="font-semibold text-brand-deep underline" href={`tel:${a.resident.phone}`}>{formatUgPhone(a.resident.phone)}</a>}
           <div className="mt-2 text-sm">
             NIN: <span className="font-mono">{nin ?? a.resident.nin_masked ?? 'not registered'}</span>
             {a.resident.nin_masked && !nin && (
@@ -155,14 +166,33 @@ export default function PoliceCase() {
         <div className="label">Evidence ({a.evidence.length})</div>
         {!a.evidence.length && <p className="text-sm text-muted">None uploaded yet.</p>}
         <div className="grid gap-3 sm:grid-cols-2">
-          {a.evidence.map((e: { id: string; kind: string; created_at: string }) => {
+          {a.evidence.map((e: { id: string; kind: string; created_at: string; sha256: string | null }) => {
             const url = `/api/evidence/${e.id}`;
+            const check = checks[e.id];
             return (
               <div key={e.id}>
                 <div className="mb-1 text-xs text-muted">{e.kind} · {fmt(e.created_at)}</div>
                 {e.kind === 'photo' && <a href={url} target="_blank" rel="noreferrer">{/* eslint-disable-next-line @next/next/no-img-element */}<img src={url} alt="" className="max-h-56 rounded-xl object-cover" /></a>}
                 {e.kind === 'video' && <video src={url} controls className="w-full rounded-xl" />}
                 {e.kind === 'audio' && <audio src={url} controls className="w-full" />}
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                  {e.sha256 ? (
+                    <span className="font-mono text-muted" title={`SHA-256 ${e.sha256}`}>Fingerprint {e.sha256.slice(0, 12)}…</span>
+                  ) : (
+                    <span className="text-muted">No fingerprint (older upload)</span>
+                  )}
+                  {e.sha256 && (
+                    <button className="font-semibold text-brand-deep underline" disabled={check === 'checking'} onClick={() => verify(e.id)}>
+                      {check === 'checking' ? 'Checking…' : 'Verify unchanged'}
+                    </button>
+                  )}
+                  {check && check !== 'checking' && (
+                    <span className={`font-bold ${check === 'intact' ? 'text-brand-deep' : 'text-sos'}`}>
+                      {check === 'intact' ? '✓ Unchanged since upload' : check === 'changed' ? '✗ File has changed since upload'
+                        : check === 'missing' ? 'File missing' : check}
+                    </span>
+                  )}
+                </div>
               </div>
             );
           })}

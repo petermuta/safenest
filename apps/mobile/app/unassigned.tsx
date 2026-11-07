@@ -1,6 +1,7 @@
 import { formatUgPhone } from '@safenest/shared';
 import { useState } from 'react';
 import { Body, Button, Card, Screen, Title } from '../src/components/ui';
+import { confirmDeleteAccount } from '../src/lib/delete-account';
 import { useAuth } from '../src/lib/auth';
 
 /** Signed in, but no estate has registered this phone number yet. */
@@ -34,6 +35,7 @@ export default function Unassigned() {
         }}
       />
       <Button variant="ghost" title="Sign out" onPress={signOut} style={{ marginTop: 8 }} />
+      <Button variant="ghost" title="Delete my account" onPress={() => confirmDeleteAccount(signOut)} />
     </Screen>
   );
 }

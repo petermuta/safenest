@@ -23,12 +23,16 @@ export const GET = handle(async (req: Request) => {
     ));
     if (!origin) return { origin: null, alerts: [] };
     const alerts = await tx.all(
-      `select c.id, c.category, c.message, c.lat, c.lng, c.status, c.created_at,
+      // Privacy: neighbours get an approximate spot (~150 m grid) so a post never reveals
+      // the poster's home, and no names, so the poster can't be targeted. The exact point is
+      // kept and goes to police only if someone taps "Send to police".
+      `select c.id, c.category, c.message, c.status, c.created_at,
+              (round(c.lat::numeric * 750) / 750)::float as lat, (round(c.lng::numeric * 750) / 750)::float as lng,
               c.photo_path is not null as has_photo, c.sos_alert_id is not null as sent_to_police,
               c.user_id = auth.uid() as mine,
-              split_part(coalesce(p.full_name, 'A neighbour'), ' ', 1) as author,
+              'A neighbour' as author,
               e.name as estate_name,
-              round(public.distance_km($1, $2, c.lat, c.lng)::numeric, 2)::float as distance_km,
+              greatest(0.1, round(public.distance_km($1, $2, c.lat, c.lng)::numeric, 1))::float as distance_km,
               (select count(*)::int from community_reactions r where r.alert_id = c.id and r.kind = 'see_it_too') as see_it_too,
               (select count(*)::int from community_reactions r where r.alert_id = c.id and r.kind = 'all_clear') as all_clear,
               (select kind from community_reactions r where r.alert_id = c.id and r.user_id = auth.uid()) as my_reaction,
@@ -36,7 +40,6 @@ export const GET = handle(async (req: Request) => {
               (select count(*)::int from community_reports r where r.alert_id = c.id) as reports,
               public.can_moderate_community(c.id) as can_moderate
          from community_alerts c
-         join profiles p on p.id = c.user_id
          left join estates e on e.id = c.estate_id
         where c.created_at > now() - interval '3 days'
           and public.distance_km($1, $2, c.lat, c.lng) <= $3

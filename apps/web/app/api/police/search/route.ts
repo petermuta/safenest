@@ -14,8 +14,20 @@ export const POST = handle(async (req: Request) => {
   const reason = String(b.reason ?? '').trim();
   if (reason.length < 5) throw new ApiError(400, 'Give a reason for this search — it is recorded in the audit log');
 
-  return ok(await asUser(userId, async (tx) => {
-    await requireOfficer(tx);
+  const limit = Number(process.env.NIN_SEARCH_DAILY_LIMIT ?? 20);
+  const result = await asUser(userId, async (tx) => {
+    const me = await requireOfficer(tx);
+    // Daily cap per officer, so the database can't be trawled. Blocked attempts are logged too.
+    const used = (await tx.one(
+      `select count(*)::int as n from police_audit_log
+        where officer_id = $1 and action = 'nin_search' and created_at > now() - interval '24 hours'`,
+      [me.id],
+    ))!.n;
+    if (used >= limit) {
+      // Logged and committed, then refused below (throwing here would undo the log entry).
+      await log(tx, 'nin_search_blocked', null, null, { reason, nin_last4: nin.slice(-4), limit });
+      return { blocked: true as const };
+    }
     const person = await tx.one(
       `select p.id, p.full_name, p.phone, ri.selfie_path is not null as has_selfie, ri.consent_at
          from resident_identity ri join profiles p on p.id = ri.user_id where ri.nin_hash = $1`,
@@ -35,5 +47,7 @@ export const POST = handle(async (req: Request) => {
       [person.id],
     );
     return { found: true, person, homes, alerts };
-  }));
+  });
+  if ('blocked' in result) throw new ApiError(429, `Daily NIN search limit reached (${limit}). Ask your commander if you need more.`);
+  return ok(result);
 });

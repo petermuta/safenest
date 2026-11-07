@@ -24,7 +24,12 @@ function testCode(phone: string): string | null {
   return list.includes(phone) ? code : null;
 }
 
-export async function sendCode(phone: string) {
+/** The visitor's IP as Netlify reports it (used only for rate limits). */
+export function clientIp(req: Request) {
+  return (req.headers.get('x-nf-client-connection-ip') ?? req.headers.get('x-forwarded-for')?.split(',')[0] ?? 'unknown').trim();
+}
+
+export async function sendCode(phone: string, ip = 'unknown') {
   const fixed = testCode(phone);
   const code = fixed ?? String(randomInt(0, 1_000_000)).padStart(6, '0');
 
@@ -34,9 +39,23 @@ export async function sendCode(phone: string) {
       [phone],
     );
     if ((recent?.n ?? 0) >= MAX_SENDS_PER_10_MIN) throw new ApiError(429, 'Too many codes requested. Wait 10 minutes and try again.');
+    // Each SMS costs money: cap codes per network address, and overall as a circuit breaker
+    // against someone scripting requests to many numbers.
+    const perIp = Number(process.env.OTP_IP_HOURLY_LIMIT ?? 10);
+    const global = Number(process.env.OTP_GLOBAL_HOURLY_LIMIT ?? 300);
+    const counts = await tx.one<{ ip: number; all: number }>(
+      `select count(*) filter (where ip = $1)::int as ip, count(*)::int as "all"
+         from auth.otp_codes where created_at > now() - interval '1 hour'`,
+      [ip],
+    );
+    if ((counts?.ip ?? 0) >= perIp) throw new ApiError(429, 'Too many sign-in attempts from this network. Try again in an hour.');
+    if ((counts?.all ?? 0) >= global) {
+      console.error(`SafeNest: global SMS limit reached (${global}/hour) — possible abuse`);
+      throw new ApiError(503, 'Sign-in is busy right now. Please try again in a few minutes.');
+    }
     await tx.all(
-      `insert into auth.otp_codes (phone, code_hash, expires_at) values ($1, $2, now() + make_interval(mins => $3))`,
-      [phone, hash(phone, code), CODE_TTL_MIN],
+      `insert into auth.otp_codes (phone, code_hash, expires_at, ip) values ($1, $2, now() + make_interval(mins => $3), $4)`,
+      [phone, hash(phone, code), CODE_TTL_MIN, ip],
     );
   });
 

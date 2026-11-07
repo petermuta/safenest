@@ -1,6 +1,6 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Alert, Image, Pressable, Text, View } from 'react-native';
 import { Body, Button, Card, Input, Label, Screen, Title } from '../src/components/ui';
 import { api, errorMessage } from '../src/lib/api';
@@ -19,6 +19,7 @@ export default function Onboarding() {
   const [name, setName] = useState(profile?.full_name ?? '');
   const [nin, setNin] = useState('');
   const [consent, setConsent] = useState(false);
+  const [adult, setAdult] = useState(false);
   const [photo, setPhoto] = useState<{ uri: string; mime?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [sosBusy, setSosBusy] = useState(false);
@@ -27,9 +28,10 @@ export default function Onboarding() {
 
   const saveNin = async () => {
     if (!consent) return Alert.alert('Consent needed', 'Tick the box to agree to share your NIN.');
+    if (!adult) return Alert.alert('18 or older only', 'SafeNest accounts are for adults. A parent or guardian in your home can register instead.');
     setBusy(true);
     try {
-      await api('/api/me/identity', { body: { full_name: name, nin, consent: true } });
+      await api('/api/me/identity', { body: { full_name: name, nin, consent: true, adult: true } });
       await refresh();
     } catch (e) {
       Alert.alert('Not saved', errorMessage(e));
@@ -96,15 +98,15 @@ export default function Onboarding() {
           <Input label="Full name (as on your National ID)" value={name} onChangeText={setName} autoCapitalize="words" />
           <Input label="NIN" value={nin} onChangeText={(v) => setNin(v.toUpperCase())} autoCapitalize="characters"
             autoCorrect={false} placeholder="CM12345678ABCD" maxLength={20} />
-          <Pressable onPress={() => setConsent(!consent)} style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start', marginBottom: 16 }}>
-            <View style={{ width: 24, height: 24, borderRadius: 7, borderWidth: 2, borderColor: c.primary, backgroundColor: consent ? c.primary : 'transparent', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>
-              {consent ? <Text style={{ color: '#fff', fontWeight: '900' }}>✓</Text> : null}
-            </View>
-            <Body style={{ flex: 1 }}>
-              I agree to SafeNest storing my NIN and sharing it with the police when I raise an SOS or when police search for me.
-            </Body>
-          </Pressable>
-          <Button title="Continue" onPress={saveNin} loading={busy} disabled={!consent || nin.length < 14 || name.trim().length < 3} />
+          <Check checked={consent} onPress={() => setConsent(!consent)} color={c.primary}>
+            I agree to SafeNest storing my NIN and photo and sharing them with the police when I raise an SOS or when
+            police search for me. I understand this data is stored on secure servers outside Uganda (in the United States),
+            and that I can delete my account at any time from my profile.
+          </Check>
+          <Check checked={adult} onPress={() => setAdult(!adult)} color={c.primary}>
+            I am 18 years or older.
+          </Check>
+          <Button title="Continue" onPress={saveNin} loading={busy} disabled={!consent || !adult || nin.length < 14 || name.trim().length < 3} />
         </Card>
       ) : (
         <Card style={{ alignItems: 'center' }}>
@@ -130,5 +132,17 @@ export default function Onboarding() {
       </Card>
       <Button variant="ghost" title="Sign out" onPress={signOut} />
     </Screen>
+  );
+}
+
+function Check({ checked, onPress, color, children }: { checked: boolean; onPress: () => void; color: string; children: ReactNode }) {
+  return (
+    <Pressable onPress={onPress} accessibilityRole="checkbox" accessibilityState={{ checked }}
+      style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start', marginBottom: 16 }}>
+      <View style={{ width: 24, height: 24, borderRadius: 7, borderWidth: 2, borderColor: color, backgroundColor: checked ? color : 'transparent', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>
+        {checked ? <Text style={{ color: '#fff', fontWeight: '900' }}>✓</Text> : null}
+      </View>
+      <Body style={{ flex: 1 }}>{children}</Body>
+    </Pressable>
   );
 }

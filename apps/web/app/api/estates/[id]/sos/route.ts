@@ -17,7 +17,7 @@ export const GET = handle(async (req: Request, { params }: { params: Promise<{ i
               coalesce((select jsonb_agg(jsonb_build_object('recipient_type', n.recipient_type, 'channel', n.channel, 'status', n.status))
                           from notification_log n where n.alert_id = a.id), '[]') as notifications
          from sos_alerts a
-         join profiles p on p.id = a.user_id
+         left join profiles p on p.id = a.user_id
          left join units u on u.id = a.unit_id
          left join police_stations s on s.id = a.police_station_id
         where a.estate_id = $1

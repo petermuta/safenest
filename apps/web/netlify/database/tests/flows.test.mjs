@@ -217,5 +217,26 @@ ok(!r.rows[0].m && r.rows[0].h, 'residents can read the feed but not moderate');
 r = await as(stranger, `select has_any_membership() h`);
 ok(!r.rows[0].h, 'people with no estate are not in the community feed');
 
+console.log('\nSecurity hardening');
+const auditId = (await db.query(`select id from police_audit_log limit 1`)).rows[0].id;
+let threw = false;
+try { await db.query(`update police_audit_log set action = 'edited' where id = $1`, [auditId]); } catch { threw = true; }
+ok(threw, 'audit log entries cannot be edited');
+threw = false;
+try { await db.query(`delete from police_audit_log where id = $1`, [auditId]); } catch { threw = true; }
+ok(threw, 'recent audit log entries cannot be deleted');
+await db.query(`insert into police_audit_log (action, created_at) values ('old_entry', now() - interval '800 days')`);
+r = await db.query(`delete from police_audit_log where action = 'old_entry' returning 1`);
+ok(r.rows.length === 1, 'entries older than 2 years can be removed by the retention job');
+r = await db.query(`select confdeltype from pg_constraint where conname in ('sos_alerts_user_id_fkey', 'visitor_logs_guard_id_fkey', 'invitations_invited_by_fkey')`);
+ok(r.rows.length === 3 && r.rows.every((x) => x.confdeltype === 'n'), 'deleting an account keeps SOS, visitor and invitation records (link set to empty)');
+const sosOwner = (await db.query(`select user_id from sos_alerts where id = $1`, [alert])).rows[0].user_id;
+await db.query(`delete from guest_passes where created_by = $1`, [sosOwner]);
+await db.query(`delete from auth.users where id = $1`, [sosOwner]);
+r = await db.query(`select user_id from sos_alerts where id = $1`, [alert]);
+ok(r.rows.length === 1 && r.rows[0].user_id === null, 'a deleted resident’s SOS stays on record without them');
+r = await db.query(`select count(*)::int n from police_audit_log where alert_id = $1`, [alert]);
+ok(r.rows[0].n > 0, 'audit trail for that SOS is intact');
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

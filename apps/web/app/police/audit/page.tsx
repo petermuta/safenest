@@ -23,6 +23,8 @@ const ACTION: Record<string, string> = {
   reveal_nin: 'Viewed full NIN',
   nin_search: 'Searched by NIN',
   view_selfie: 'Viewed resident photo',
+  nin_search_blocked: 'NIN search blocked (daily limit)',
+  reset_pin: 'PIN reset by admin',
   duty_on: 'Signed on duty',
   duty_off: 'Signed off duty',
 };
@@ -36,14 +38,35 @@ function describe(r: Row) {
   return '';
 }
 
+interface Unusual { officer: string; unit: string | null; searches: number; reveals: number; blocked: number }
+
 export default function AuditLog() {
   const [rows, setRows] = useState<Row[] | null>(null);
-  useEffect(() => { api<Row[]>('/api/police/audit').then(setRows).catch(() => setRows([])); }, []);
+  const [unusual, setUnusual] = useState<Unusual[]>([]);
+  useEffect(() => {
+    api<{ entries: Row[]; unusual: Unusual[] }>('/api/police/audit')
+      .then((d) => { setRows(d.entries); setUnusual(d.unusual); })
+      .catch(() => setRows([]));
+  }, []);
 
   return (
     <>
       <h1 className="text-2xl font-black tracking-tight">Audit log</h1>
       <p className="mt-1 text-muted">Every police action on resident data. Commanders see their unit and the units under it.</p>
+      {unusual.length > 0 && (
+        <div className="card mt-5 border-amber-400/60 p-4">
+          <div className="font-bold text-amber-700 dark:text-amber-400">Unusual activity in the last 24 hours</div>
+          <p className="text-sm text-muted">High numbers of NIN searches or reveals can mean misuse. Check each one has a genuine case reason.</p>
+          <ul className="mt-2 space-y-1 text-sm">
+            {unusual.map((u) => (
+              <li key={u.officer + u.unit}>
+                <b>{u.officer}</b>{u.unit ? ` (${u.unit})` : ''}: {u.searches} searches, {u.reveals} full-NIN views
+                {u.blocked ? `, ${u.blocked} blocked by the daily limit` : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="card mt-5 overflow-x-auto">
         <table className="w-full min-w-[640px] text-left text-sm">
           <thead className="border-b border-line text-xs uppercase text-muted">

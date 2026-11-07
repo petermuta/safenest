@@ -4,7 +4,8 @@
 //
 // Needs a running app with ALLOW_TEST_OTP=true, TEST_OTP_NUMBERS containing every test
 // number below (+2567000001/2/3/4/5/6/7/800 and 999 series), SUPER_ADMIN_PHONES=+256700000100,
-// NIN_ENCRYPTION_KEY set, and a fresh database with the test police stations seeded.
+// NIN_ENCRYPTION_KEY set, TEST_OTP_CODE (same value in this script's env),
+// OTP_IP_HOURLY_LIMIT=40, NIN_SEARCH_DAILY_LIMIT=3, and a fresh database with the test police stations seeded.
 // Never point this at the live site.
 
 const BASE = (process.argv[2] ?? 'http://localhost:3000').replace(/\/$/, '');
@@ -13,8 +14,9 @@ if (!/^\d{6}$/.test(TEST_CODE)) { console.error('Set TEST_OTP_CODE (same as the 
 let pass = 0, fail = 0;
 const ok = (cond, msg) => { cond ? pass++ : fail++; console.log(`  ${cond ? '✓' : '✗'} ${msg}`); };
 
-async function call(path, { token, method, body, form, cookie } = {}) {
+async function call(path, { token, method, body, form, cookie, ip } = {}) {
   const headers = {};
+  if (ip) headers['x-nf-client-connection-ip'] = ip;
   if (token) headers.Authorization = `Bearer ${token}`;
   if (cookie) headers.Cookie = cookie;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -28,9 +30,11 @@ async function call(path, { token, method, body, form, cookie } = {}) {
   return { status: res.status, data, res };
 }
 
+const PIN = '4826';
 async function signIn(phone) {
   await call('/api/auth/otp', { body: { phone } });
-  const r = await call('/api/auth/verify', { body: { phone, code: TEST_CODE } });
+  let r = await call('/api/auth/verify', { body: { phone, code: TEST_CODE } });
+  if (r.data.pending) r = await call('/api/auth/pin', { body: { pending: r.data.pending, pin: PIN } }); // staff / police / admin
   return { token: r.data.token, cookie: r.res.headers.get('set-cookie')?.split(';')[0] };
 }
 
@@ -44,6 +48,23 @@ r = await call('/api/me');
 ok(r.status === 401, 'no session → 401');
 r = await call('/api/me', { token: 'not-a-real-token' });
 ok(r.status === 401, 'forged token → 401');
+
+console.log('\nPIN (second step for admin, managers and police)');
+await call('/api/auth/otp', { body: { phone: '+256700000100' } });
+r = await call('/api/auth/verify', { body: { phone: '+256700000100', code: TEST_CODE } });
+ok(r.data.pin === 'setup' && !!r.data.pending && !r.data.token, 'super admin must create a PIN before getting a session');
+const pend = r.data.pending;
+r = await call('/api/auth/pin', { body: { pending: pend, pin: '1234' } });
+ok(r.status === 400, `easy PIN refused → "${r.data.error}"`);
+r = await call('/api/me', { token: pend });
+ok(r.status === 401, 'the half-signed-in token does not work as a session');
+r = await call('/api/auth/pin', { body: { pending: pend, pin: PIN } });
+ok(!!r.data.token, 'PIN created → signed in');
+await call('/api/auth/otp', { body: { phone: '+256700000100' } });
+r = await call('/api/auth/verify', { body: { phone: '+256700000100', code: TEST_CODE } });
+ok(r.data.pin === 'enter', 'next sign-in asks for the PIN');
+const wrong = await call('/api/auth/pin', { body: { pending: r.data.pending, pin: '9157' } });
+ok(wrong.status === 400 || wrong.status === 401, 'wrong PIN refused');
 
 const mgr = await signIn('+256700000100');
 ok(!!mgr.token && !!mgr.cookie, 'manager signs in (token for app + cookie for web)');
@@ -145,6 +166,10 @@ const form = () => { const f = new FormData(); f.append('kind', 'photo'); f.appe
 r = await call(`/api/sos/${alert}/evidence`, { token: res.token, form: form() });
 ok(r.status === 201, 'resident uploads a photo');
 const evId = r.data.id;
+r = await call(`/api/evidence/${evId}/verify`, { token: grd.token, method: 'POST' });
+ok(r.data.status === 'intact' && /^[0-9a-f]{64}$/.test(r.data.recorded), 'evidence fingerprint recorded and verifies as unchanged');
+r = await call(`/api/evidence/${evId}/verify`, { token: stranger.token, method: 'POST' });
+ok(r.status === 403, "outsider can't run the check");
 r = await call(`/api/sos/${alert}/evidence`, { token: res2.token, form: form() });
 ok(r.status === 403, "others can't add evidence");
 r = await call(`/api/evidence/${evId}`, { token: grd.token });
@@ -183,8 +208,10 @@ ok(r.status === 400, 'NIN refused without consent');
 r = await call('/api/me/identity', { token: res.token, body: { full_name: 'Grace Achieng', nin: '12345', consent: true } });
 ok(r.status === 400, 'malformed NIN refused');
 r = await call('/api/me/identity', { token: res.token, body: { full_name: 'Grace Achieng', nin: 'cm 1234 5678 abcd', consent: true } });
+ok(r.status === 400, 'NIN refused without confirming 18+');
+r = await call('/api/me/identity', { token: res.token, body: { full_name: 'Grace Achieng', nin: 'cm 1234 5678 abcd', consent: true, adult: true } });
 ok(r.status === 200 && r.data.nin_masked === '••••••••••ABCD', `NIN saved and masked (${r.data.nin_masked})`);
-r = await call('/api/me/identity', { token: res2.token, body: { full_name: 'Copy Cat', nin: 'CM12345678ABCD', consent: true } });
+r = await call('/api/me/identity', { token: res2.token, body: { full_name: 'Copy Cat', nin: 'CM12345678ABCD', consent: true, adult: true } });
 ok(r.status === 409, 'same NIN cannot be registered to a second account');
 const selfie = () => { const f = new FormData(); f.append('photo', new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 9, 9, 9, 0xff, 0xd9])], { type: 'image/jpeg' }), 's.jpg'); return f; };
 r = await call('/api/me/selfie', { token: res.token, form: selfie() });
@@ -271,14 +298,17 @@ r = await call(`/api/identity/${meRes}/selfie`, { token: hqc.token });
 ok(r.status === 200, 'photo viewable after a logged search');
 r = await call('/api/police/search', { token: res.token, body: { nin: 'CM12345678ABCD', reason: 'curious neighbour' } });
 ok(r.status === 403, 'residents cannot search by NIN');
+for (let i = 0; i < 2; i++) await call('/api/police/search', { token: hqc.token, body: { nin: 'CM00000000AAA' + i, reason: 'Routine check' } });
+r = await call('/api/police/search', { token: hqc.token, body: { nin: 'CM12345678ABCD', reason: 'One too many' } });
+ok(r.status === 429, `daily NIN search limit enforced → "${r.data.error}"`);
 
 r = await call(`/api/police/alerts/${sos2}/status`, { token: offc.token, body: { status: 'closed' } });
 ok(r.status === 200, 'officer closes the case');
 r = await call('/api/police/audit', { token: hqc.token });
-const actions = new Set(r.data.map((x) => x.action));
-ok(['escalate', 'nin_search', 'view_selfie'].every((a) => actions.has(a)), `HQ audit log shows actions in its chain (${[...actions].join(', ')})`);
+const actions = new Set(r.data.entries.map((x) => x.action));
+ok(['escalate', 'nin_search', 'view_selfie', 'nin_search_blocked'].every((a) => actions.has(a)), `HQ audit log shows actions in its chain (${[...actions].join(', ')})`);
 r = await call('/api/police/audit', { token: disp.token });
-ok(['view_alert', 'reveal_nin', 'assign', 'escalate'].every((a) => r.data.some((x) => x.action === a)), 'post audit log records opens, NIN reveals, dispatch and escalation');
+ok(['view_alert', 'reveal_nin', 'assign', 'escalate'].every((a) => r.data.entries.some((x) => x.action === a)), 'post audit log records opens, NIN reveals, dispatch and escalation');
 
 console.log('\nCommunity alerts');
 const cform = (lat, lng, withPhoto) => {
@@ -294,6 +324,8 @@ const ca = r.data.id;
 r = await call('/api/community?lat=0.4&lng=32.64', { token: res2.token });
 const seen = r.data.alerts?.find((a) => a.id === ca);
 ok(!!seen && seen.distance_km < 1 && seen.has_photo, `neighbour within 1 km sees it (${seen?.distance_km} km)`);
+ok(seen?.author === 'A neighbour' && seen.lat !== 0.4003 && Math.abs(seen.lat - 0.4003) < 0.001 && !JSON.stringify(seen).includes('Grace'),
+  `neighbours see an approximate spot and no name (${seen?.lat}, ${seen?.lng})`);
 r = await call('/api/community?lat=0.42&lng=32.64', { token: res2.token });
 ok(!r.data.alerts.some((a) => a.id === ca), 'someone ~2 km away does not');
 r = await call('/api/community', { token: stranger.token });
@@ -325,6 +357,37 @@ r = await call('/api/community?lat=0.4&lng=32.64', { token: res2.token });
 ok(!r.data.alerts.some((a) => a.id === ca), 'removed post disappears for residents');
 r = await call('/api/community?lat=0.4&lng=32.64', { token: mgr.token });
 ok(r.data.alerts.find((a) => a.id === ca)?.status === 'removed', 'manager still sees it (marked removed)');
+
+console.log('\nSign-in abuse limits');
+let codes = 0, limited = false;
+for (let i = 0; i < 45 && !limited; i++) {
+  r = await call('/api/auth/otp', { ip: '203.0.113.9', body: { phone: `+2567000090${String(i).padStart(2, '0')}` } });
+  if (r.status === 429) limited = true; else codes++;
+}
+ok(limited && codes === 40, `one network is cut off after 40 codes an hour (${codes} sent)`);
+r = await call('/api/auth/otp', { ip: '203.0.113.10', body: { phone: '+256700000999' } });
+ok(r.status === 200, 'other networks are unaffected');
+
+console.log('\nData retention and account deletion');
+r = await call('/api/admin/retention', { token: mgr.token, method: 'POST' });
+ok(r.status === 200 && typeof r.data.result?.otp === 'number', `admin runs the clean-up (${JSON.stringify(r.data.result)})`);
+r = await call('/api/admin/retention', { token: res.token, method: 'POST' });
+ok(r.status === 403, 'only the admin can run it');
+r = await call('/api/me', { token: grd.token, method: 'DELETE', body: { confirm: 'DELETE' } });
+ok(r.status === 400, 'staff accounts cannot self-delete (manager removes them)');
+r = await call('/api/me', { token: res2.token, method: 'DELETE', body: {} });
+ok(r.status === 400, 'deletion needs explicit confirmation');
+r = await call('/api/me', { token: res2.token, method: 'DELETE', body: { confirm: 'DELETE' } });
+ok(r.status === 400, `blocked while their SOS is still open → "${r.data.error}"`);
+await call(`/api/police/alerts/${fromCommunity}/status`, { token: disp.token, body: { status: 'closed' } });
+r = await call('/api/me', { token: res2.token, method: 'DELETE', body: { confirm: 'DELETE' } });
+ok(r.status === 200 && r.data.deleted, 'resident deletes their account once the case is closed');
+r = await call('/api/me', { token: res2.token });
+ok(r.status === 401, 'their old session no longer works');
+r = await call(`/api/police/alerts/${fromCommunity}`, { token: disp.token });
+ok(r.status === 200 && !r.data.alert.resident.id && !r.data.alert.resident.phone, 'police keep the case record, without the person');
+r = await call(`/api/estates/${estate}`, { token: mgr.token });
+ok(!r.data.members.some((m) => m.profile.phone === '+256700000400'), 'they are gone from the estate');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

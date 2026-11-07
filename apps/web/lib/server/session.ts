@@ -5,6 +5,9 @@ import { ApiError } from './http';
 
 export const SESSION_COOKIE = 'sn_session';
 const SESSION_DAYS = 30;
+// Bumped from 'session' when the PIN step was added: every older session stops working,
+// so nobody keeps a police/manager/admin session that never passed the PIN check.
+export const SESSION_AUDIENCE = 'session-v2';
 
 function secret() {
   const s = process.env.SESSION_SECRET;
@@ -18,8 +21,23 @@ export async function signSession(userId: string) {
     .setSubject(userId)
     .setIssuedAt()
     .setExpirationTime(`${SESSION_DAYS}d`)
-    .setAudience('session')
+    .setAudience(SESSION_AUDIENCE)
     .sign(secret());
+}
+
+/** 10-minute token proving the SMS code was correct, while the user enters their PIN. */
+export async function signPinPending(userId: string) {
+  return new SignJWT({}).setProtectedHeader({ alg: 'HS256' }).setSubject(userId)
+    .setExpirationTime('10m').setAudience('pin-pending').sign(secret());
+}
+
+export async function verifyPinPending(token: string): Promise<string | null> {
+  try {
+    const { payload } = await jwtVerify(token, secret(), { audience: 'pin-pending' });
+    return payload.sub ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Short-lived token that lets one evidence file open in a browser/media player. */
@@ -44,7 +62,7 @@ export async function verifyEvidenceLink(token: string, evidenceId: string): Pro
 async function verify(token: string | undefined | null): Promise<string | null> {
   if (!token) return null;
   try {
-    const { payload } = await jwtVerify(token, secret(), { audience: 'session' });
+    const { payload } = await jwtVerify(token, secret(), { audience: SESSION_AUDIENCE });
     return payload.sub ?? null;
   } catch {
     return null;

@@ -3,7 +3,7 @@ import { asUser } from '@/lib/server/db';
 import { dispatchSos } from '@/lib/server/dispatch';
 import { handle, ok, uuid } from '@/lib/server/http';
 import { requireUser } from '@/lib/server/session';
-import { getEvidence, putEvidence } from '@/lib/server/storage';
+import { getEvidence, putEvidence, sha256 } from '@/lib/server/storage';
 
 export const maxDuration = 26;
 
@@ -35,7 +35,8 @@ export const POST = handle(async (req: Request, { params }: { params: Promise<{ 
         const key = `${alertId}/photo-community-${Date.now()}.jpg`;
         await putEvidence(key, file.data, file.contentType);
         await asUser(userId, (tx) =>
-          tx.all(`insert into sos_evidence (alert_id, kind, storage_path) values ($1, 'photo', $2)`, [alertId, key]),
+          tx.all(`insert into sos_evidence (alert_id, kind, storage_path, sha256) values ($1, 'photo', $2, $3)`,
+            [alertId, key, sha256(file.data)]),
         );
       }
     } catch (e) {

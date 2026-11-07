@@ -7,8 +7,9 @@ import { requireUser } from '@/lib/server/session';
 // The NIN is encrypted before storage; only its last 4 characters are kept readable.
 export const POST = handle(async (req: Request) => {
   const userId = await requireUser(req);
-  const b = await body<{ full_name?: string; nin?: string; consent?: boolean }>(req);
+  const b = await body<{ full_name?: string; nin?: string; consent?: boolean; adult?: boolean }>(req);
   if (b.consent !== true) throw new ApiError(400, 'Please agree to share your NIN with SafeNest and the police');
+  if (b.adult !== true) throw new ApiError(400, 'SafeNest accounts are for people aged 18 or older');
   const name = String(b.full_name ?? '').trim();
   if (name.length < 3) throw new ApiError(400, 'Enter your full name as it appears on your National ID');
   const nin = normalizeNin(String(b.nin ?? ''));

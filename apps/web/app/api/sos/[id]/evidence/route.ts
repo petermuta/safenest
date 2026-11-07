@@ -1,7 +1,7 @@
 import { asUser } from '@/lib/server/db';
 import { ApiError, handle, ok, uuid } from '@/lib/server/http';
 import { requireUser } from '@/lib/server/session';
-import { putEvidence } from '@/lib/server/storage';
+import { putEvidence, sha256 } from '@/lib/server/storage';
 
 // Netlify functions accept request bodies up to about 6 MB.
 const MAX_BYTES = 5.5 * 1024 * 1024;
@@ -26,10 +26,15 @@ export const POST = handle(async (req: Request, { params }: { params: Promise<{ 
   const key = `${alertId}/${kind}-${Date.now()}.${ext}`;
 
   await asUser(userId, (tx) => tx.assert('can_upload_evidence', key, 'You can only add evidence to your own alert'));
-  await putEvidence(key, await file.arrayBuffer(), contentType);
+  const data = await file.arrayBuffer();
+  const fingerprint = sha256(data); // proves later that the file wasn't altered
+  await putEvidence(key, data, contentType);
   const row = await asUser(userId, async (tx) => {
     await tx.assert('can_upload_evidence', key, 'You can only add evidence to your own alert');
-    return tx.one(`insert into sos_evidence (alert_id, kind, storage_path) values ($1, $2, $3) returning *`, [alertId, kind, key]);
+    return tx.one(
+      `insert into sos_evidence (alert_id, kind, storage_path, sha256) values ($1, $2, $3, $4) returning *`,
+      [alertId, kind, key, fingerprint],
+    );
   });
   return ok(row, 201);
 });

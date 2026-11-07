@@ -1,6 +1,7 @@
 import 'server-only';
 import { getStore } from '@netlify/blobs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 // SOS evidence lives in a private Netlify Blobs store. Nothing is public: files are
@@ -8,6 +9,8 @@ import path from 'node:path';
 // For local runs without Netlify, set EVIDENCE_LOCAL_DIR to keep files on disk instead.
 
 const STORE = 'sos-evidence';
+
+export const sha256 = (data: ArrayBuffer) => createHash('sha256').update(Buffer.from(data)).digest('hex');
 const localDir = () => process.env.EVIDENCE_LOCAL_DIR;
 const safe = (key: string) => key.replace(/[^a-zA-Z0-9/_.-]/g, '');
 
@@ -38,4 +41,22 @@ export async function getEvidence(key: string): Promise<{ data: ArrayBuffer; con
   const entry = await getStore({ name: STORE, consistency: 'strong' }).getWithMetadata(key, { type: 'arrayBuffer' });
   if (entry === null) return null;
   return { data: entry.data, contentType: String(entry.metadata?.contentType ?? 'application/octet-stream') };
+}
+
+/** Permanently deletes stored files (retention clean-up, account deletion). Missing files are ignored. */
+export async function deleteEvidence(keys: string[]) {
+  const dir = localDir();
+  for (const key of keys) {
+    try {
+      if (dir) {
+        const file = path.join(dir, safe(key));
+        await rm(file, { force: true });
+        await rm(`${file}.type`, { force: true });
+      } else {
+        await getStore(STORE).delete(key);
+      }
+    } catch (e) {
+      console.error('Could not delete stored file', key, e);
+    }
+  }
 }

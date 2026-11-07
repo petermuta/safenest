@@ -33,7 +33,9 @@ interface AuthState {
   identity: IdentityStatus | null;
   police: PoliceInfo | null;
   mode: Mode;
-  signIn: (phone: string, code: string) => Promise<void>;
+  /** Returns a PIN step for police/managers/admin, or null when signed in. */
+  signIn: (phone: string, code: string) => Promise<{ mode: 'setup' | 'enter'; pending: string } | null>;
+  completePin: (pending: string, pin: string) => Promise<void>;
   refresh: () => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -97,7 +99,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     police,
     mode,
     signIn: async (phone, code) => {
-      const { token } = await api<{ token: string }>('/api/auth/verify', { body: { phone, code } });
+      const r = await api<{ token?: string; pin?: 'setup' | 'enter'; pending?: string }>('/api/auth/verify', { body: { phone, code } });
+      if (r.pin && r.pending) return { mode: r.pin, pending: r.pending };
+      await saveToken(r.token!);
+      await refresh();
+      return null;
+    },
+    completePin: async (pending, pin) => {
+      const { token } = await api<{ token: string }>('/api/auth/pin', { body: { pending, pin } });
       await saveToken(token);
       await refresh();
     },
