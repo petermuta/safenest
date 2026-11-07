@@ -63,7 +63,7 @@ Go to **Project configuration → Environment variables** and add these with **B
 
 Then **Deploys → Trigger deploy**, because variable changes only apply after a new build. Open `https://<your-site>.netlify.app/api/health`. It should show `"ok": true` and `"sessionSecretSet": true`.
 
-**Testing without SMS credit:** temporarily add `ALLOW_TEST_OTP=true` and `TEST_OTP_NUMBERS=+256700000100,+256700000200,+256700000300`. Those numbers then sign in with code `123456` and no SMS is sent. **Remove both before real people use it.**
+**Testing without SMS credit:** temporarily add `ALLOW_TEST_OTP=true` and `TEST_OTP_NUMBERS=+256700000100,+256700000200,+256700000300`. Also add `TEST_OTP_CODE`, a secret 6-digit code you choose (never `123456`), marked as a secret. Those numbers then sign in with that code and no SMS is sent. **Remove both before real people use it.**
 
 ### 5. Set up your estate (on the dashboard)
 1. Sign in with your number.

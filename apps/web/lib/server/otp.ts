@@ -12,13 +12,16 @@ const hash = (phone: string, code: string) =>
   createHmac('sha256', process.env.SESSION_SECRET ?? '').update(`${phone}:${code}`).digest('hex');
 
 /**
- * Test numbers get a fixed code and no SMS — only when ALLOW_TEST_OTP=true.
- * Never enable that on the live site.
+ * Test numbers sign in with a fixed code and no SMS — only when ALLOW_TEST_OTP=true AND a
+ * secret 6-digit TEST_OTP_CODE is set. The code is never in the source, so knowing the test
+ * numbers (which are public in the repo) is not enough. Turn test mode off before real users.
  */
 function testCode(phone: string): string | null {
   if (process.env.ALLOW_TEST_OTP !== 'true') return null;
+  const code = process.env.TEST_OTP_CODE ?? '';
+  if (!/^\d{6}$/.test(code) || code === '123456') return null;
   const list = (process.env.TEST_OTP_NUMBERS ?? '').split(',').map((s) => s.trim());
-  return list.includes(phone) ? '123456' : null;
+  return list.includes(phone) ? code : null;
 }
 
 export async function sendCode(phone: string) {

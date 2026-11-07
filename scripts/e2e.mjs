@@ -8,6 +8,8 @@
 // Never point this at the live site.
 
 const BASE = (process.argv[2] ?? 'http://localhost:3000').replace(/\/$/, '');
+const TEST_CODE = process.env.TEST_OTP_CODE ?? '';
+if (!/^\d{6}$/.test(TEST_CODE)) { console.error('Set TEST_OTP_CODE (same as the server)'); process.exit(1); }
 let pass = 0, fail = 0;
 const ok = (cond, msg) => { cond ? pass++ : fail++; console.log(`  ${cond ? '✓' : '✗'} ${msg}`); };
 
@@ -28,7 +30,7 @@ async function call(path, { token, method, body, form, cookie } = {}) {
 
 async function signIn(phone) {
   await call('/api/auth/otp', { body: { phone } });
-  const r = await call('/api/auth/verify', { body: { phone, code: '123456' } });
+  const r = await call('/api/auth/verify', { body: { phone, code: TEST_CODE } });
   return { token: r.data.token, cookie: r.res.headers.get('set-cookie')?.split(';')[0] };
 }
 
